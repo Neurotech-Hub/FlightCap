@@ -1,0 +1,34 @@
+# Keep legacy materials as read-only reference.
+Reference/
+
+# --- Zephyr / nRF Connect SDK -------------------------------------------------
+# Standard `build/` plus common multi-configuration names (e.g. build-adv, build-scan).
+applications/**/build/
+applications/**/build-*/
+
+# Top-level west/sysbuild output if you build from the repo root.
+/build/
+
+# Twister / CI output (if used later).
+twister-out/
+sanity-out/
+
+# Firmware images (normally only under build/; ignore anywhere under applications).
+applications/**/*.hex
+applications/**/*.bin
+applications/**/*.elf
+applications/**/*.uf2
+applications/**/*.map
+
+# --- OS / editor -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+
+# Python (scripts or tooling in-repo).
+__pycache__/
+*.py[cod]
+.venv/
+venv/

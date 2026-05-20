@@ -1,0 +1,29 @@
+# Hardware protection
+CONFIG_ARM_MPU=y
+CONFIG_HW_STACK_PROTECTION=y
+
+# Essential peripherals
+CONFIG_GPIO=y
+CONFIG_GPIO_NRFX=y
+CONFIG_SPI=y
+CONFIG_SPI_NRFX=y
+CONFIG_I2C=y
+CONFIG_I2C_NRFX=y
+CONFIG_ADC=y
+CONFIG_ADC_NRFX_SAADC=y
+CONFIG_SENSOR=y
+
+# Console on RTT
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_CONSOLE=y
+
+# No UART console on this board
+CONFIG_UART_NRFX=n
+CONFIG_UART_CONSOLE=n
+
+# Note: BT controller TX power (CONFIG_BT_CTLR_TX_PWR_ANTENNA=8) is set per
+# application in each BT-using app's prj.conf rather than here. Setting it at
+# the board level applies it to every sysbuild child image -- including
+# MCUboot, which does not build the BT controller and therefore warns about
+# the unsatisfied dependency. See applications/flightcap-{prod,ble-test}/prj.conf.

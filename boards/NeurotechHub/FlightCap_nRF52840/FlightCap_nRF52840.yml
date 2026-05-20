@@ -1,0 +1,10 @@
+identifier: FlightCap_nRF52840/nrf52840
+name: FlightCap_nRF52840
+vendor: NeurotechHub
+type: mcu
+arch: arm
+ram: 256
+flash: 1024
+toolchain:
+  - zephyr
+supported: []

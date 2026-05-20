@@ -1,0 +1,86 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch nRF Connect application",
+            "config": "flightcap-blink",
+            "flash": true,
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch the active build configuration",
+            "config": "${activeConfig}",
+            "flash": true,
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch active config (RTT logs)",
+            "config": "${activeConfig}",
+            "snr": "802004887",
+            "gdbServer": {
+                "args": {
+                    "if": "SWD",
+                    "speed": 4000,
+                    "device": "NRF52840_XXAA",
+                    "select": "usb=${snr}",
+                    "port": "${port}",
+                    "rtos": "${rtosPlugin}",
+                    "jlinkscriptfile": "${jlinkScript}",
+                    "additionalArgs": [
+                        "singlerun",
+                        "nogui",
+                        "halt",
+                        "noir",
+                        "silent"
+                    ]
+                }
+            },
+            "flash": true,
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch flightcap-blink",
+            "config": "${workspaceFolder}/applications/flightcap-blink/build/flightcap-blink",
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch flightcap-axy",
+            "config": "${workspaceFolder}/applications/flightcap-axy/build/flightcap-axy",
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch flightcap-ble-test",
+            "config": "${workspaceFolder}/applications/flightcap-ble-test/build/flightcap-ble-test",
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch flightcap-prod",
+            "config": "${workspaceFolder}/applications/flightcap-prod/build/flightcap-prod",
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch juxta5-8-prod (parked / reference build only)",
+            "config": "${workspaceFolder}/applications/juxta5-8-prod/build/juxta5-8-prod",
+            "runToEntryPoint": "main"
+        }
+    ]
+}

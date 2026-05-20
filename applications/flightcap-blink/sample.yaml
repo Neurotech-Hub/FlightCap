@@ -1,0 +1,19 @@
+sample:
+  name: FlightCap LED Blink Bring-up
+  description: >
+    Hardware bring-up test for FlightCap. LED0 blinks at 200 ms unless MAG_INT is high,
+    in which case LED0 is held on continuously.
+
+common:
+  tags:
+    - flightcap
+    - bringup
+    - gpio
+    - magnet
+    - led
+
+tests:
+  applications.flightcap-blink:
+    platform_allow:
+      - FlightCap_nRF52840
+    harness: console

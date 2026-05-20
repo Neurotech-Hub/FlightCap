@@ -1,0 +1,133 @@
+/dts-v1/;
+#include <nordic/nrf52840_qiaa.dtsi>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include "FlightCap_nRF52840-pinctrl.dtsi"
+
+/ {
+	model = "FlightCap_nRF52840";
+	compatible = "NeurotechHub,FlightCap_nRF52840";
+
+	chosen {
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led0: led_0 {
+			gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>;
+			label = "LED0";
+		};
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		magnet_sensor: magnet_sensor {
+			gpios = <&gpio0 25 GPIO_ACTIVE_LOW>;
+			label = "Magnet detect interrupt";
+		};
+		accel_int1: accel_int1 {
+			gpios = <&gpio1 11 GPIO_ACTIVE_LOW>;
+			label = "Accelerometer interrupt 1";
+		};
+	};
+
+	aliases {
+		led0 = &led0;
+		magnet-sensor = &magnet_sensor;
+		accel-int = &accel_int1;
+		spi-accel = &accel0;
+		i2c-bus = &i2c1;
+		rtc = &rtc0;
+	};
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpiote {
+	status = "okay";
+};
+
+&rtc0 {
+	status = "okay";
+};
+
+&wdt0 {
+	status = "okay";
+};
+
+&spi0 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	pinctrl-0 = <&spi0_default>;
+	pinctrl-1 = <&spi0_sleep>;
+	pinctrl-names = "default", "sleep";
+	cs-gpios = <&gpio1 6 GPIO_ACTIVE_LOW>;
+
+	accel0: accel@0 {
+		compatible = "st,lis2dh12-spi";
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+		label = "LIS2DH12";
+	};
+};
+
+/*
+ * I2C bus on the FlightCap pin map.
+ *   SDA = P0.30  (Nordic Low-Frequency I/O pin — reduced drive strength / slew)
+ *   SCL = P1.13  (standard I/O pin)
+ *
+ * Nordic flags P0.30 as Low-Frequency I/O in the nRF52840 product
+ * specification (see https://docs.nordicsemi.com/bundle/ps_nrf52840/page/pin.html).
+ * To stay within those LF I/O timing limits we run TWIM1 at standard mode
+ * (100 kHz). If a slave is unreliable at this rate after hardware bring-up,
+ * fall back to a software (bit-banged) I2C driver — see compatible
+ * `gpio-i2c` / `zephyr,i2c-gpio` and reassign &gpio0 30 / &gpio1 13 there.
+ *
+ * Note on instance selection: nRF52840 instance 0 is shared between SPIM0
+ * (used here for the accelerometer) and TWIM0. We therefore use TWIM1
+ * (`&i2c1`) so the SPI and I2C peripherals can coexist.
+ */
+&i2c1 {
+	compatible = "nordic,nrf-twim";
+	status = "okay";
+	pinctrl-0 = <&i2c1_default>;
+	pinctrl-1 = <&i2c1_sleep>;
+	pinctrl-names = "default", "sleep";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 DT_SIZE_K(48)>;
+		};
+
+		slot0_partition: partition@c000 {
+			label = "image-0";
+			reg = <0x0000c000 DT_SIZE_K(464)>;
+		};
+
+		slot1_partition: partition@80000 {
+			label = "image-1";
+			reg = <0x00080000 DT_SIZE_K(464)>;
+		};
+
+		storage_partition: partition@f0000 {
+			label = "storage";
+			reg = <0x000f0000 DT_SIZE_K(64)>;
+		};
+	};
+};

@@ -1,0 +1,19 @@
+sample:
+  name: FlightCap Production (Phase 1)
+  description: >
+    Accelerometer motion-event counting over 1-second windows with LED0
+    flash at each reset, plus I2C bus bring-up on TWIM1 (SDA P0.30, SCL P1.13).
+
+common:
+  tags:
+    - flightcap
+    - production
+    - accelerometer
+    - lis2dh12
+    - i2c
+
+tests:
+  applications.flightcap-prod:
+    platform_allow:
+      - FlightCap_nRF52840
+    harness: console

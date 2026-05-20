@@ -1,0 +1,16 @@
+sample:
+  name: FlightCap BLE Peripheral LED Test
+  description: >
+    Connectable GATT service: write 0/1 to control LED0.
+
+common:
+  tags:
+    - flightcap
+    - bluetooth
+    - peripheral
+
+tests:
+  applications.flightcap-ble-test:
+    platform_allow:
+      - FlightCap_nRF52840
+    harness: console
