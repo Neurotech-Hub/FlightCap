@@ -1,0 +1,10 @@
+identifier: FlightCap_nRF52833/nrf52833
+name: FlightCap_nRF52833
+vendor: NeurotechHub
+type: mcu
+arch: arm
+ram: 128
+flash: 512
+toolchain:
+  - zephyr
+supported: []

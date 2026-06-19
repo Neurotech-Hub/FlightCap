@@ -3,8 +3,7 @@
         "${workspaceFolder}/applications/flightcap-blink",
         "${workspaceFolder}/applications/flightcap-axy",
         "${workspaceFolder}/applications/flightcap-ble-test",
-        "${workspaceFolder}/applications/flightcap-prod",
-        "${workspaceFolder}/applications/juxta5-8-prod"
+        "${workspaceFolder}/applications/flightcap-prod"
     ],
     "nrf-connect.debugging.bindings": {
         "${workspaceFolder}/applications/flightcap-blink/build/flightcap-blink": "Launch flightcap-blink",

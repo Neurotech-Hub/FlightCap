@@ -30,7 +30,7 @@
                 "args": {
                     "if": "SWD",
                     "speed": 4000,
-                    "device": "NRF52840_XXAA",
+                    "device": "NRF52833_XXAA",
                     "select": "usb=${snr}",
                     "port": "${port}",
                     "rtos": "${rtosPlugin}",
@@ -73,13 +73,6 @@
             "request": "launch",
             "name": "Launch flightcap-prod",
             "config": "${workspaceFolder}/applications/flightcap-prod/build/flightcap-prod",
-            "runToEntryPoint": "main"
-        },
-        {
-            "type": "nrf-connect",
-            "request": "launch",
-            "name": "Launch juxta5-8-prod (parked / reference build only)",
-            "config": "${workspaceFolder}/applications/juxta5-8-prod/build/juxta5-8-prod",
             "runToEntryPoint": "main"
         }
     ]

@@ -23,6 +23,8 @@
 #include <zephyr/sys/poweroff.h>
 #include <zephyr/sys/util.h>
 
+#include "vbatt_zephyr.h"
+
 LOG_MODULE_REGISTER(flightcap_ble_test, LOG_LEVEL_INF);
 
 /* Custom 128-bit UUIDs (test-only). */
@@ -40,8 +42,15 @@ static const struct bt_uuid_128 flightcap_led_chr_uuid =
 static const struct bt_uuid_128 flightcap_sleep_chr_uuid =
 	BT_UUID_INIT_128(BT_UUID_FLIGHTCAP_SLEEP_CHR_VAL);
 
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec magnet = GPIO_DT_SPEC_GET(DT_ALIAS(magnet_sensor), gpios);
+
+static void leds_set(int value)
+{
+	(void)gpio_pin_set_dt(&led0, value);
+	(void)gpio_pin_set_dt(&led1, value);
+}
 
 /** Backing value for GATT read (0 = off, 1 = on). */
 static uint8_t led_gatt_value;
@@ -70,7 +79,7 @@ static ssize_t led_chr_write(struct bt_conn *conn, const struct bt_gatt_attr *at
 	}
 
 	*st = ((const uint8_t *)buf)[0] ? 1U : 0U;
-	(void)gpio_pin_set_dt(&led, *st);
+	leds_set(*st);
 	LOG_INF("LED GATT write -> %u", *st);
 
 	return len;
@@ -222,7 +231,8 @@ static void deep_sleep_run(struct k_work *work)
 		return;
 	}
 
-	(void)gpio_pin_set_dt(&led, 0);
+	(void)gpio_pin_set_dt(&led0, 0);
+	(void)gpio_pin_set_dt(&led1, 0);
 
 	LOG_INF("Entering System OFF — wake when MAG pad goes LOW (magnet present) -> cold boot");
 
@@ -260,16 +270,19 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.disconnected = disconnected_cb,
 };
 
+#define VBATT_LOG_PERIOD_MS 30000U
+
 int main(void)
 {
 	int err;
 
-	if (!gpio_is_ready_dt(&led)) {
+	if (!gpio_is_ready_dt(&led0) || !gpio_is_ready_dt(&led1)) {
 		LOG_ERR("LED GPIO not ready");
 		return -ENODEV;
 	}
 
-	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+	err = gpio_pin_configure_dt(&led0, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
 	if (err != 0) {
 		LOG_ERR("gpio_pin_configure_dt(led) failed: %d", err);
 		return err;
@@ -281,6 +294,12 @@ int main(void)
 	}
 
 	led_gatt_value = 0U;
+
+	err = vbatt_init();
+	if (err != 0) {
+		LOG_ERR("VDD ADC init failed (%d)", err);
+		return err;
+	}
 
 	err = bt_enable(NULL);
 	if (err != 0) {
@@ -295,8 +314,20 @@ int main(void)
 		return err;
 	}
 
+	uint32_t last_vbatt_log_ms = k_uptime_get_32();
+
 	for (;;) {
-		k_sleep(K_SECONDS(60));
+		int32_t vdd_mv = 0;
+		uint32_t now_ms = k_uptime_get_32();
+
+		if ((now_ms - last_vbatt_log_ms) >= VBATT_LOG_PERIOD_MS) {
+			if (vbatt_read_mv(&vdd_mv) == 0) {
+				LOG_INF("vdd_mv=%d", (int)vdd_mv);
+			}
+			last_vbatt_log_ms = now_ms;
+		}
+
+		k_sleep(K_SECONDS(1));
 	}
 
 	return 0;

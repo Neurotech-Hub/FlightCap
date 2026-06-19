@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /*
- * Rolling, trimmed-mean filter for VL53L4CD samples.
+ * Rolling, trimmed-mean filter for ToF distance samples.
  *
  * The reader thread pushes valid millimeter readings into a fixed-capacity
  * circular buffer. The main 1 s loop calls snapshot() to grab a sorted

@@ -1,8 +1,8 @@
 sample:
   name: FlightCap Production (Phase 1)
   description: >
-    Accelerometer motion-event counting over 1-second windows with LED0
-    flash at each reset, plus I2C bus bring-up on TWIM1 (SDA P0.30, SCL P1.13).
+    1 Hz motion + VL53L0X distance telemetry over BLE (FCP GATT), magnet
+    forced-sleep, and MCUmgr SMP DFU on FlightCap_nRF52833.
 
 common:
   tags:
@@ -11,9 +11,11 @@ common:
     - accelerometer
     - lis2dh12
     - i2c
+    - vl53l0x
+    - bluetooth
 
 tests:
   applications.flightcap-prod:
     platform_allow:
-      - FlightCap_nRF52840
+      - FlightCap_nRF52833
     harness: console

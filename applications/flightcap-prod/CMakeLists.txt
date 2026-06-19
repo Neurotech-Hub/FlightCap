@@ -6,13 +6,12 @@ project(flightcap_prod LANGUAGES C)
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../flightcap-axy/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Reference/nRF/lib/lisd2h12
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/lis2dh12
 )
 
 target_sources(app PRIVATE
     src/main.c
-    src/vl53l4cd_zephyr.c
     src/vl53l4cd_filter.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../flightcap-axy/src/lis2dh12_zephyr.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Reference/nRF/lib/lisd2h12/lis2dh12_reg.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/lis2dh12/lis2dh12_reg.c
 )

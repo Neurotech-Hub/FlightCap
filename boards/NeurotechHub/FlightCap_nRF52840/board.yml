@@ -1,5 +1,0 @@
-board:
-  name: FlightCap_nRF52840
-  vendor: NeurotechHub
-  socs:
-    - name: nrf52840

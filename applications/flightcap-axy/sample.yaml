@@ -1,19 +1,19 @@
 sample:
   name: FlightCap Accelerometer Tester
   description: >
-    LIS2DH12 SPI Mode 0 bring-up app for FlightCap with RTT telemetry and
-    motion interrupt logging on INT1.
+    LIS2DH12 I2C bring-up app for FlightCap with RTT telemetry and motion
+    interrupt logging on INT1.
 
 common:
   tags:
     - flightcap
     - accelerometer
     - lis2dh12
-    - spi
+    - i2c
     - gpio
 
 tests:
   applications.flightcap-axy:
     platform_allow:
-      - FlightCap_nRF52840
+      - FlightCap_nRF52833
     harness: console

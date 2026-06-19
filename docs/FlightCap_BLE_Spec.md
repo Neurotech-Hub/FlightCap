@@ -1,7 +1,7 @@
 # FlightCap BLE Spec (Phase 1)
 
 This document is the device-side contract for the `flightcap-prod` firmware
-running on the FlightCap board (nRF52840). It is written for an iOS developer
+running on the FlightCap board (nRF52833). It is written for an iOS developer
 implementing a Core Bluetooth central. Phase 1 covers motion-event counting
 and time-of-flight distance telemetry only — no writable control,
 configuration, or OTA characteristics yet.
@@ -74,8 +74,8 @@ accelerometer's INT1 line over the last 1 s window.
 
 ### Distance characteristic (`…7b03`)
 
-Reports a trimmed-mean snapshot of the VL53L4CD time-of-flight sensor's
-rolling buffer (16 entries deep, ~20 Hz raw rate, 50 ms timing budget).
+Reports a trimmed-mean snapshot of the VL53L0X time-of-flight sensor's
+rolling buffer (16 entries deep, ~20–30 Hz raw rate via single-shot polling).
 
 | Offset | Field | Type | Notes |
 | --- | --- | --- | --- |
@@ -88,7 +88,7 @@ that case the firmware emits `dist_mm = 0` as a sentinel. This happens:
 - transiently, right after boot (filter not yet primed) and immediately
   after wake-from-magnet-sleep (filter is cleared on wake);
 - persistently (`sample_count` stays at `0` indefinitely) when the
-  VL53L4CD sensor failed to bring up at boot. In that case the device
+  VL53L0X sensor failed to bring up at boot. In that case the device
   still advertises, connects, and notifies normally — only the distance
   reading is permanently invalid. There is no separate "sensor missing"
   flag on the wire; iOS apps should rely on the same `sample_count < 4`

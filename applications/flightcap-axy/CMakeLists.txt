@@ -5,11 +5,13 @@ project(flightcap_axy LANGUAGES C)
 
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Reference/nRF/lib/lisd2h12
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/lis2dh12
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/vbatt
 )
 
 target_sources(app PRIVATE
     src/main.c
     src/lis2dh12_zephyr.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Reference/nRF/lib/lisd2h12/lis2dh12_reg.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/lis2dh12/lis2dh12_reg.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/vbatt/vbatt_zephyr.c
 )
