@@ -64,6 +64,13 @@
         {
             "type": "nrf-connect",
             "request": "launch",
+            "name": "Launch flightcap-mem",
+            "config": "${workspaceFolder}/applications/flightcap-mem/build/flightcap-mem",
+            "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
             "name": "Launch flightcap-ble-test",
             "config": "${workspaceFolder}/applications/flightcap-ble-test/build/flightcap-ble-test",
             "runToEntryPoint": "main"
@@ -71,8 +78,8 @@
         {
             "type": "nrf-connect",
             "request": "launch",
-            "name": "Launch flightcap-prod",
-            "config": "${workspaceFolder}/applications/flightcap-prod/build/flightcap-prod",
+            "name": "Launch flightcap-demo",
+            "config": "${workspaceFolder}/applications/flightcap-demo/build/flightcap-demo",
             "runToEntryPoint": "main"
         }
     ]

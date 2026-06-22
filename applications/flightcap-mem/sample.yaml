@@ -1,0 +1,19 @@
+sample:
+  name: FlightCap SPI NOR Memory Tester
+  description: >
+    MX25R8035F SPI NOR bring-up on FlightCap_nRF52833 with RTT JEDEC,
+    size, and destructive last-sector R/W verification.
+
+common:
+  tags:
+    - flightcap
+    - bringup
+    - spi
+    - flash
+    - mx25r8035
+
+tests:
+  applications.flightcap-mem:
+    platform_allow:
+      - FlightCap_nRF52833
+    harness: console

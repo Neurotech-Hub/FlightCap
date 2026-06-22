@@ -7,8 +7,6 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/sensor.h>
-#include <zephyr/init.h>
 #include <zephyr/irq.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -16,18 +14,18 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 
+#include "flightcap_hw.h"
 #include "lis2dh12_zephyr.h"
+#include "vl53l0x_zephyr.h"
 #include "vl53l4cd_filter.h"
 
-LOG_MODULE_REGISTER(flightcap_prod, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(flightcap_demo, LOG_LEVEL_INF);
 
 #define LED0_NODE DT_ALIAS(led0)
 #define LED1_NODE DT_ALIAS(led1)
 #define ACCEL_INT_NODE DT_ALIAS(accel_int)
 #define MAGNET_NODE DT_ALIAS(magnet_sensor)
 #define I2C_NODE DT_ALIAS(i2c_bus)
-#define TOF_NODE DT_ALIAS(tof_sensor)
-#define TOF_EN_NODE DT_ALIAS(tof_enable)
 
 #define WINDOW_MS 1000U
 #define LED_FLASH_MS 50U
@@ -37,20 +35,13 @@ LOG_MODULE_REGISTER(flightcap_prod, LOG_LEVEL_INF);
 #define TOF_POLL_INTERVAL_MS 5U
 #define TOF_THREAD_STACK_SIZE 2048
 #define TOF_THREAD_PRIORITY K_PRIO_PREEMPT(7)
-/* TPS63900 soft-start + VL53L0X tBOOT after EN asserted. */
-#define TOF_POWER_SETTLE_MS 10U
 
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 static const struct gpio_dt_spec accel_int = GPIO_DT_SPEC_GET(ACCEL_INT_NODE, gpios);
 static const struct gpio_dt_spec magnet = GPIO_DT_SPEC_GET(MAGNET_NODE, gpios);
 static const struct device *const i2c_dev = DEVICE_DT_GET(I2C_NODE);
-#if DT_NODE_EXISTS(TOF_NODE)
-static const struct device *const tof_dev = DEVICE_DT_GET(TOF_NODE);
-#endif
-#if DT_NODE_EXISTS(TOF_EN_NODE)
-static const struct gpio_dt_spec tof_en = GPIO_DT_SPEC_GET(TOF_EN_NODE, gpios);
-#endif
+static const struct device *tof_dev;
 
 static struct gpio_callback accel_int_cb;
 static volatile uint32_t motion_events;
@@ -61,49 +52,6 @@ static void leds_set(int value)
 	(void)gpio_pin_set_dt(&led0, value);
 	(void)gpio_pin_set_dt(&led1, value);
 }
-
-#if DT_NODE_EXISTS(TOF_EN_NODE)
-static int tof_power_set(bool enable)
-{
-	int ret;
-
-	if (!gpio_is_ready_dt(&tof_en)) {
-		return -ENODEV;
-	}
-
-	ret = gpio_pin_set_dt(&tof_en, enable ? 1 : 0);
-	if (ret < 0) {
-		return ret;
-	}
-
-	if (enable) {
-		k_sleep(K_MSEC(TOF_POWER_SETTLE_MS));
-	}
-
-	return 0;
-}
-
-/*
- * Assert TOF_EN before the Zephyr VL53L0X driver inits (default
- * CONFIG_SENSOR_INIT_PRIORITY is 90). Priority must be a plain integer
- * literal — CONFIG_SENSOR_INIT_PRIORITY - 1 breaks the linker in NCS 3.0.
- */
-#define TOF_POWER_INIT_PRIO 50
-
-static int tof_power_pre_sensor_init(void)
-{
-	int ret;
-
-	ret = gpio_pin_configure_dt(&tof_en, GPIO_OUTPUT_INACTIVE);
-	if (ret < 0) {
-		return ret;
-	}
-
-	return tof_power_set(true);
-}
-
-SYS_INIT(tof_power_pre_sensor_init, POST_KERNEL, TOF_POWER_INIT_PRIO);
-#endif /* DT_NODE_EXISTS(TOF_EN_NODE) */
 
 /*
  * tof_present is set true only after the Zephyr VL53L0X driver reports ready
@@ -328,35 +276,6 @@ static void window_fault_blink(void)
 	}
 }
 
-static int tof_read_mm(uint16_t *mm_out)
-{
-	struct sensor_value dist;
-	int ret;
-
-	if (!mm_out) {
-		return -EINVAL;
-	}
-
-	ret = sensor_sample_fetch(tof_dev);
-	if (ret != 0) {
-		return ret;
-	}
-
-	ret = sensor_channel_get(tof_dev, SENSOR_CHAN_DISTANCE, &dist);
-	if (ret != 0) {
-		return ret;
-	}
-
-	int32_t mm = dist.val1 * 1000 + dist.val2 / 1000;
-
-	if (mm <= 0 || mm > UINT16_MAX) {
-		return -EINVAL;
-	}
-
-	*mm_out = (uint16_t)mm;
-	return 0;
-}
-
 static void tof_thread_fn(void *a, void *b, void *c)
 {
 	ARG_UNUSED(a);
@@ -366,7 +285,7 @@ static void tof_thread_fn(void *a, void *b, void *c)
 	while (1) {
 		uint16_t mm = 0;
 
-		if (tof_read_mm(&mm) == 0) {
+		if (tof_dev != NULL && vl53l0x_zephyr_read_mm(tof_dev, &mm) == 0) {
 			vl53l4cd_filter_push(mm);
 		}
 
@@ -439,6 +358,23 @@ int main(void)
 	}
 	LOG_INF("I2C ready: %s (SDA P0.05, SCL P0.04, 100 kHz)", i2c_dev->name);
 
+	{
+		struct flightcap_hw_status hw = {0};
+
+		(void)flightcap_hw_check(FLIGHTCAP_HW_VBATT | FLIGHTCAP_HW_ACCEL | FLIGHTCAP_HW_TOF,
+					&hw);
+
+		if (hw.tof_ok) {
+			tof_present = true;
+			tof_dev = DEVICE_DT_GET(DT_ALIAS(tof_sensor));
+			LOG_INF("VL53L0X ready (probe_mm=%u, single-shot ~33 ms budget)",
+				hw.tof_probe_mm);
+		} else {
+			LOG_ERR("VL53L0X probe failed -- continuing without ToF");
+			tof_dev = NULL;
+		}
+	}
+
 	ret = lis2dh12_zephyr_init(&lis2dh12);
 	if (ret < 0) {
 		LOG_ERR("LIS2DH12 init failed (%d)", ret);
@@ -464,27 +400,9 @@ int main(void)
 	/* Park reader until VL53L0X probe completes (thread auto-starts at boot). */
 	k_thread_suspend(tof_tid);
 
-#if DT_NODE_EXISTS(TOF_NODE)
-	if (!device_is_ready(tof_dev)) {
-		LOG_ERR("VL53L0X device not ready -- continuing without ToF");
-	} else {
-		uint16_t probe_mm = 0;
-
-		ret = tof_read_mm(&probe_mm);
-		if (ret == 0) {
-			tof_present = true;
-			k_thread_resume(tof_tid);
-			LOG_INF("VL53L0X ready (probe_mm=%u, single-shot ~33 ms budget)", probe_mm);
-		} else {
-			LOG_ERR("VL53L0X probe read failed (%d) -- continuing without ToF", ret);
-#if DT_NODE_EXISTS(TOF_EN_NODE)
-			(void)tof_power_set(false);
-#endif
-		}
+	if (tof_present) {
+		k_thread_resume(tof_tid);
 	}
-#else
-	LOG_ERR("Board has no tof-sensor alias -- continuing without ToF");
-#endif
 
 	ret = bt_enable(NULL);
 	if (ret != 0) {

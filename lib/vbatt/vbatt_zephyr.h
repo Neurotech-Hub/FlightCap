@@ -5,5 +5,6 @@
 
 int vbatt_init(void);
 int vbatt_read_mv(int32_t *mv_out);
+int vbatt_check(int32_t *mv_out);
 
 #endif

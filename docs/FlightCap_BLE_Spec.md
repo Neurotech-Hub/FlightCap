@@ -1,12 +1,12 @@
 # FlightCap BLE Spec (Phase 1)
 
-This document is the device-side contract for the `flightcap-prod` firmware
+This document is the device-side contract for the `flightcap-demo` firmware
 running on the FlightCap board (nRF52833). It is written for an iOS developer
 implementing a Core Bluetooth central. Phase 1 covers motion-event counting
 and time-of-flight distance telemetry only — no writable control,
 configuration, or OTA characteristics yet.
 
-The firmware source lives in `applications/flightcap-prod/`; the contract
+The firmware source lives in `applications/flightcap-demo/`; the contract
 below is what the radio actually emits and accepts on hardware.
 
 ## At a glance

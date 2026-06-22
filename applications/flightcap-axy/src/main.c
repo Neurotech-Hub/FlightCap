@@ -6,6 +6,7 @@
 
 #include "lis2dh12_zephyr.h"
 #include "vbatt_zephyr.h"
+#include "flightcap_hw.h"
 
 LOG_MODULE_REGISTER(flightcap_axy, LOG_LEVEL_INF);
 
@@ -62,10 +63,13 @@ int main(void)
 		return ret;
 	}
 
-	ret = vbatt_init();
-	if (ret < 0) {
-		LOG_ERR("VDD ADC init failed (%d)", ret);
-		return ret;
+	{
+		struct flightcap_hw_status hw = {0};
+
+		ret = flightcap_hw_check(FLIGHTCAP_HW_VBATT | FLIGHTCAP_HW_ACCEL, &hw);
+		if (ret < 0) {
+			LOG_WRN("Hardware check reported failures — continuing");
+		}
 	}
 
 	ret = lis2dh12_zephyr_init(&lis2dh12);

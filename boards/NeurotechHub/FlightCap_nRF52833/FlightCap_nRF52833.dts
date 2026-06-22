@@ -97,7 +97,7 @@
 /*
  * Shared I2C bus (TWIM0): SCL P0.04, SDA P0.05 @ 100 kHz.
  *   LIS2DH12 @ 0x19 (SA0 high)
- *   VL53L0X @ 0x29 (Zephyr sensor driver in flightcap-prod)
+ *   VL53L0X @ 0x29 (Zephyr sensor driver in flightcap-demo)
  */
 &i2c0 {
 	compatible = "nordic,nrf-twim";

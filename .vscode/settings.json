@@ -2,14 +2,16 @@
     "nrf-connect.applications": [
         "${workspaceFolder}/applications/flightcap-blink",
         "${workspaceFolder}/applications/flightcap-axy",
+        "${workspaceFolder}/applications/flightcap-mem",
         "${workspaceFolder}/applications/flightcap-ble-test",
-        "${workspaceFolder}/applications/flightcap-prod"
+        "${workspaceFolder}/applications/flightcap-demo"
     ],
     "nrf-connect.debugging.bindings": {
         "${workspaceFolder}/applications/flightcap-blink/build/flightcap-blink": "Launch flightcap-blink",
         "${workspaceFolder}/applications/flightcap-axy/build/flightcap-axy": "Launch flightcap-axy",
+        "${workspaceFolder}/applications/flightcap-mem/build/flightcap-mem": "Launch flightcap-mem",
         "${workspaceFolder}/applications/flightcap-ble-test/build/flightcap-ble-test": "Launch flightcap-ble-test",
-        "${workspaceFolder}/applications/flightcap-prod/build/flightcap-prod": "Launch flightcap-prod"
+        "${workspaceFolder}/applications/flightcap-demo/build/flightcap-demo": "Launch flightcap-demo"
     },
     "files.associations": {
         "gpio.h": "c",

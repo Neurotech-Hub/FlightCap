@@ -87,3 +87,28 @@ int vbatt_read_mv(int32_t *mv_out)
 	return -ENODEV;
 #endif
 }
+
+int vbatt_check(int32_t *mv_out)
+{
+	int32_t mv = 0;
+	int ret;
+
+	ret = vbatt_init();
+	if (ret < 0) {
+		LOG_ERR("VDD check FAIL: init (%d)", ret);
+		return ret;
+	}
+
+	ret = vbatt_read_mv(&mv);
+	if (ret < 0) {
+		LOG_ERR("VDD check FAIL: read (%d)", ret);
+		return ret;
+	}
+
+	if (mv_out) {
+		*mv_out = mv;
+	}
+
+	LOG_INF("VDD check PASS: %d mV", (int)mv);
+	return 0;
+}

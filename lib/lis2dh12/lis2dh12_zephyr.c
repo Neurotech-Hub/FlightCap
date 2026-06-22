@@ -60,8 +60,11 @@ int lis2dh12_zephyr_read_whoami(struct lis2dh12_dev *dev, uint8_t *whoami)
 	return platform_read(LIS2DH12_WHO_AM_I, whoami, 1);
 }
 
-int lis2dh12_zephyr_init(struct lis2dh12_dev *dev)
+int lis2dh12_zephyr_check(struct lis2dh12_dev *dev)
 {
+	uint8_t whoami = 0;
+	int ret;
+
 	if (!dev) {
 		return -EINVAL;
 	}
@@ -70,22 +73,47 @@ int lis2dh12_zephyr_init(struct lis2dh12_dev *dev)
 	dev->bus.addr = LIS2DH12_I2C_ADDR;
 
 	if (!device_is_ready(dev->bus.bus)) {
-		LOG_ERR("LIS2DH12 I2C bus not ready");
+		LOG_ERR("LIS2DH12 check FAIL: I2C bus not ready");
 		return -ENODEV;
 	}
 
 	dev->initialized = true;
 	g_dev = dev;
 
-	uint8_t whoami = 0;
-	int ret = lis2dh12_zephyr_read_whoami(dev, &whoami);
+	ret = lis2dh12_zephyr_read_whoami(dev, &whoami);
+	if (ret < 0) {
+		LOG_ERR("LIS2DH12 check FAIL: WHO_AM_I read (%d)", ret);
+		dev->initialized = false;
+		return ret;
+	}
 
+	if (whoami != 0x33U) {
+		LOG_ERR("LIS2DH12 check FAIL: unexpected WHO_AM_I=0x%02x", whoami);
+		dev->initialized = false;
+		return -ENODEV;
+	}
+
+	LOG_INF("LIS2DH12 check PASS WHO_AM_I=0x33 I2C addr=0x%02x", LIS2DH12_I2C_ADDR);
+	return 0;
+}
+
+int lis2dh12_zephyr_init(struct lis2dh12_dev *dev)
+{
+	uint8_t whoami = 0;
+	int ret;
+
+	if (!dev) {
+		return -EINVAL;
+	}
+
+	ret = lis2dh12_zephyr_check(dev);
 	if (ret < 0) {
 		return ret;
 	}
-	if (whoami != 0x33U) {
-		LOG_ERR("Unexpected WHO_AM_I=0x%02x", whoami);
-		return -ENODEV;
+
+	ret = lis2dh12_zephyr_read_whoami(dev, &whoami);
+	if (ret < 0) {
+		return ret;
 	}
 
 	uint8_t ctrl_reg1 = 0x2F; /* 10Hz, LP mode, XYZ on */

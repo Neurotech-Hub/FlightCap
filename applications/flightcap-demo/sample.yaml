@@ -1,5 +1,5 @@
 sample:
-  name: FlightCap Production (Phase 1)
+  name: FlightCap Demo (Phase 1)
   description: >
     1 Hz motion + VL53L0X distance telemetry over BLE (FCP GATT), magnet
     forced-sleep, and MCUmgr SMP DFU on FlightCap_nRF52833.
@@ -7,7 +7,7 @@ sample:
 common:
   tags:
     - flightcap
-    - production
+    - demo
     - accelerometer
     - lis2dh12
     - i2c
@@ -15,7 +15,7 @@ common:
     - bluetooth
 
 tests:
-  applications.flightcap-prod:
+  applications.flightcap-demo:
     platform_allow:
       - FlightCap_nRF52833
     harness: console
