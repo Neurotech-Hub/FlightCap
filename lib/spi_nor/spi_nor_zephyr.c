@@ -14,7 +14,8 @@ LOG_MODULE_REGISTER(spi_nor_zephyr, LOG_LEVEL_INF);
 #define EXPECTED_JEDEC_0 0xC2U
 #define EXPECTED_JEDEC_1 0x28U
 #define EXPECTED_JEDEC_2 0x14U
-#define EXPECTED_FLASH_SIZE 1048576U
+/* jedec,spi-nor `size` devicetree property is in bits; driver reports bytes. */
+#define EXPECTED_FLASH_SIZE (DT_PROP(DT_ALIAS(spi_flash), size) / 8U)
 #define VERIFY_SECTOR_SIZE 4096U
 #define VERIFY_PATTERN_LEN 256U
 

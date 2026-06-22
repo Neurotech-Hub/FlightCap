@@ -26,10 +26,19 @@
 		};
 	};
 
-	/* TOF_EN drives TPS63900 EN (active high) to switch VL53L0X rail. */
+	/*
+	 * TOF_EN (P0.09 / NFC1) enables TPS63900 for the VL53L0X rail. P0.09 is
+	 * an NFC antenna pin by default — see &uicr { nfct-pins-as-gpios; }.
+	 * Parent uses gpio-leds so child gpios parse for GPIO_DT_SPEC_GET, but
+	 * status "disabled" prevents led_gpio_init() from driving the pin LOW at
+	 * POST_KERNEL priority 90. Firmware owns the pin via vl53l0x_zephyr
+	 * SYS_INIT at priority 50.
+	 */
 	tof_ctrl {
 		compatible = "gpio-leds";
+		status = "disabled";
 		tof_en: tof_en {
+			status = "okay";
 			gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>;
 			label = "TOF TPS63900 enable";
 		};
@@ -74,6 +83,15 @@
  * crystal selection is via Kconfig in FlightCap_nRF52833_defconfig.
  */
 
+/*
+ * P0.09 (TOF_EN) and P0.10 are NFC1/NFC2 by default. Without this UICR bit,
+ * GPIO writes to P0.09 do not reach the pin (reads ~0 V). First boot after
+ * adding this programs UICR and triggers one automatic reset.
+ */
+&uicr {
+	nfct-pins-as-gpios;
+};
+
 &gpio0 {
 	status = "okay";
 };
@@ -116,6 +134,8 @@
 		compatible = "st,vl53l0x";
 		reg = <0x29>;
 		label = "VL53L0X";
+		/* Init after TOF_EN rail is up (vl53l0x_zephyr_check calls device_init). */
+		zephyr,deferred-init;
 	};
 };
 
@@ -137,7 +157,8 @@
 		reg = <0>;
 		spi-max-frequency = <8000000>;
 		jedec-id = [c2 28 14];
-		size = <DT_SIZE_M(1)>;
+		/* 8 Mbit (1 MiB) — jedec,spi-nor `size` is in bits, not bytes. */
+		size = <0x800000>;
 		label = "MX25R8035";
 	};
 };
