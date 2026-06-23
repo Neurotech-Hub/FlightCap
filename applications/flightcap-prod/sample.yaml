@@ -1,0 +1,21 @@
+sample:
+  name: FlightCap Prod (BLE beacon)
+  description: >
+    Non-connectable BLE manufacturer-data telemetry (ToF distance + motion
+    interactions) on a 20 s duty cycle for FlightCap_nRF52833.
+
+common:
+  tags:
+    - flightcap
+    - prod
+    - accelerometer
+    - lis2dh12
+    - i2c
+    - vl53l0x
+    - bluetooth
+
+tests:
+  applications.flightcap-prod:
+    platform_allow:
+      - FlightCap_nRF52833
+    harness: console

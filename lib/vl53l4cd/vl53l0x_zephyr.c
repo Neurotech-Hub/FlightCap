@@ -14,6 +14,7 @@ LOG_MODULE_REGISTER(vl53l0x_zephyr, LOG_LEVEL_INF);
 
 /* TPS63900 soft-start + VL53L0X tBOOT after EN asserted. */
 #define TOF_POWER_SETTLE_MS 10U
+#define TOF_SHELF_WAKE_SETTLE_MS 50U
 
 #if IS_ENABLED(CONFIG_VL53L0X) && DT_NODE_EXISTS(TOF_NODE)
 
@@ -25,10 +26,20 @@ LOG_MODULE_REGISTER(vl53l0x_zephyr, LOG_LEVEL_INF);
 #define VL53L0X_REG_WHO_AM_I 0xC0U
 #define VL53L0X_CHIP_ID      0xEEAAU
 
+/*
+ * First field of Zephyr struct vl53l0x_data (drivers/sensor/st/vl53l0x/vl53l0x.c).
+ * After TOF_EN power-off the chip reboots but started stays true unless cleared.
+ */
+struct vl53l0x_driver_started {
+	bool started;
+};
+
 static const struct i2c_dt_spec tof_i2c = I2C_DT_SPEC_GET(TOF_NODE);
 
 #if DT_NODE_EXISTS(TOF_EN_NODE)
 static const struct gpio_dt_spec tof_en = GPIO_DT_SPEC_GET(TOF_EN_NODE, gpios);
+static bool tof_rail_enabled;
+static bool tof_driver_stale;
 
 static int tof_power_set(bool enable)
 {
@@ -43,7 +54,10 @@ static int tof_power_set(bool enable)
 		return ret;
 	}
 
-	if (enable) {
+	tof_rail_enabled = enable;
+	if (!enable) {
+		tof_driver_stale = true;
+	} else {
 		k_sleep(K_MSEC(TOF_POWER_SETTLE_MS));
 	}
 
@@ -100,31 +114,49 @@ static int vl53l0x_probe_whoami(uint16_t *id_out)
 	return 0;
 }
 
-static int vl53l0x_zephyr_ensure_ready(const struct device *dev)
+int vl53l0x_zephyr_ensure_ready(const struct device *dev)
 {
 	uint16_t whoami = 0;
 	int ret;
 
-	if (device_is_ready(dev)) {
-		return 0;
+	if (dev == NULL) {
+		return -EINVAL;
 	}
 
+	/*
+	 * Always probe after TOF_EN power-on. device_is_ready() stays true even
+	 * when the rail was off (shelf mode). Clear drv_data->started so the
+	 * next sample_fetch re-runs vl53l0x_start (otherwise ranging times out).
+	 */
 	ret = vl53l0x_probe_whoami(&whoami);
 	if (ret < 0) {
 		return ret;
 	}
 
-	LOG_INF("VL53L0X WHO_AM_I=0x%04x I2C addr=0x%02x", whoami, tof_i2c.addr);
 	if (whoami != VL53L0X_CHIP_ID) {
-		LOG_ERR("VL53L0X WHO_AM_I mismatch (expect 0x%04x)", VL53L0X_CHIP_ID);
+		LOG_ERR("VL53L0X WHO_AM_I mismatch (got 0x%04x expect 0x%04x)", whoami,
+			VL53L0X_CHIP_ID);
 		return -ENODEV;
 	}
 
-	ret = device_init(dev);
-	if (ret < 0) {
-		LOG_ERR("VL53L0X device_init failed (%d)", ret);
-		return ret;
+	if (!device_is_ready(dev)) {
+		LOG_INF("VL53L0X WHO_AM_I=0x%04x I2C addr=0x%02x", whoami, tof_i2c.addr);
+		ret = device_init(dev);
+		if (ret < 0) {
+			LOG_ERR("VL53L0X device_init failed (%d)", ret);
+			return ret;
+		}
 	}
+
+#if DT_NODE_EXISTS(TOF_EN_NODE)
+	if (tof_driver_stale && device_is_ready(dev)) {
+		struct vl53l0x_driver_started *drv = dev->data;
+
+		drv->started = false;
+		tof_driver_stale = false;
+		LOG_DBG("VL53L0X driver started flag cleared after rail cycle");
+	}
+#endif
 
 	if (!device_is_ready(dev)) {
 		LOG_ERR("VL53L0X driver init completed but device not ready");
@@ -137,7 +169,20 @@ static int vl53l0x_zephyr_ensure_ready(const struct device *dev)
 int vl53l0x_zephyr_power_on(void)
 {
 #if DT_NODE_EXISTS(TOF_EN_NODE)
-	return tof_power_set(true);
+	int ret;
+
+	if (tof_rail_enabled) {
+		return 0;
+	}
+
+	ret = tof_power_set(true);
+	if (ret < 0) {
+		return ret;
+	}
+
+	/* Extra settle after shelf power-off before first sample. */
+	k_sleep(K_MSEC(TOF_SHELF_WAKE_SETTLE_MS - TOF_POWER_SETTLE_MS));
+	return 0;
 #else
 	return 0;
 #endif

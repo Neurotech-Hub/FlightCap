@@ -81,6 +81,13 @@
             "name": "Launch flightcap-demo",
             "config": "${workspaceFolder}/applications/flightcap-demo/build/flightcap-demo",
             "runToEntryPoint": "main"
+        },
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Launch flightcap-prod",
+            "config": "${workspaceFolder}/applications/flightcap-prod/build/flightcap-prod",
+            "runToEntryPoint": "main"
         }
     ]
 }

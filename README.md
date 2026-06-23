@@ -10,7 +10,7 @@ Firmware workspace for the FlightCap coin-cell wearable. Bring-up apps validate 
 | XL2       | `P0.01`        | 32.768 kHz LFXO                                                                   |
 | LED1      | `P0.02`        | Status LED (mirrored with LED0 in bring-up apps)                                  |
 | LED0      | `P0.03`        | Status LED                                                                        |
-| TOF_EN    | `P0.09`        | TPS63900 enable — **HIGH** powers VL53L0X rail (`flightcap-demo` only)            |
+| TOF_EN    | `P0.09`        | TPS63900 enable — **HIGH** powers VL53L0X rail (NFC1; UICR `nfct-pins-as-gpios`) |
 | SCL       | `P0.04`        | I2C (`&i2c0` / TWIM0), 100 kHz standard mode                                      |
 | SDA       | `P0.05`        | I2C (`&i2c0` / TWIM0)                                                             |
 | ~AXY_INT2 | `P0.15`        | LIS2DH12 interrupt 2 (`GPIO_ACTIVE_LOW`)                                          |
@@ -29,7 +29,7 @@ Firmware workspace for the FlightCap coin-cell wearable. Bring-up apps validate 
 - **Power**: Coin cell tied directly to **VDD**. Battery voltage is read via **SAADC internal VDD sense** (`NRF_SAADC_VDD` on `&adc` channel 0) — no external divider pin required on this hardware.
 - **Magnet `MAG_INT` (`P1.09`)**: `GPIO_ACTIVE_LOW` — magnet present asserts electrical LOW; `gpio_pin_get_dt(magnet_sensor)` is non-zero when active.
 - **Accelerometer**: LIS2DH12 over **I2C** at address **0x19** (SA0 high) on `&i2c0`. INT1 on `P0.17` for motion interrupts.
-- **Time-of-flight**: VL53L0X at I2C **0x29** on the same bus. Rail switched by **TPS63900** via **`TOF_EN` (`P0.09`, active high)** — asserted before sensor init at boot; cut if probe fails. Magnet forced-sleep pauses ToF polling but keeps the rail up (NCS 3.0.2 VL53L0X driver cannot re-init after a power cycle).
+- **Time-of-flight**: VL53L0X at I2C **0x29** on the same bus. Rail switched by **TPS63900** via **`TOF_EN` (`P0.09`, active high, NFC1 as GPIO)** — power asserted before sampling; rail off between prod duty cycles to save battery.
 - **External flash**: MX25R8035F (8 Mb SPI NOR) on `&spi1` (SPIM1) — instance 0 is shared with TWIM0, so I2C uses `&i2c0` and SPI uses `&spi1`. Validated by `flightcap-mem` (JEDEC ID + last-sector R/W).
 - **HFXO / INT1 note**: Nordic defaults map the 32 MHz HFXO to **P0.16 (XC1)** and **P0.17 (XC2)**. Confirm your schematic: if the 32 MHz crystal uses those pins, `~AXY_INT1` on P0.17 cannot also serve as a GPIO interrupt without a board revision.
 
@@ -84,6 +84,32 @@ Bring-up validation order:
 west build -b FlightCap_nRF52833 applications/flightcap-demo --sysbuild
 ```
 
+### 6. `applications/flightcap-prod`
+
+- **Purpose**: Production coin-cell beacon — non-connectable BLE manufacturer-data telemetry (no GATT, no connection required).
+- **Duty cycle** (20 s): average **10** VL53L0X samples (rail on + settle) → advertise **10 s** → reset interaction counter → sleep **10 s** → repeat.
+- **Motion**: LIS2DH12 INT1 (`P0.17`) counts **interactions** (accelerometer motion events) between counter resets.
+- **BLE**: Non-connectable, non-scannable legacy advertising @ **500 ms** interval. Telemetry in primary AD manufacturer data only (no device name, no scan response).
+- **Company ID**: Provisional **`0x4E48`** (ASCII `'NH'`, Neurotech Hub) until a Bluetooth SIG identifier is assigned.
+- **Packet** (`TelemetryAdv`, little-endian, 11 bytes after AD type/company):
+
+| Offset | Field | Type | Notes |
+| --- | --- | --- | --- |
+| 0 | `company_id` | `uint16` | `0x4E48` |
+| 2 | `magic` | `uint8` | `0xA5` |
+| 3 | `version` | `uint8` | `0x01` |
+| 4 | `seq` | `uint16` | Increments when distance or interactions change |
+| 6 | `distance_mm` | `int16` | Average of 10 ToF samples; `INT16_MIN` if invalid |
+| 8 | `interactions` | `uint16` | Motion events since last reset |
+| 10 | `flags` | `uint8` | bit0 dist valid, bit1 interactions valid, bit2 ToF error, bit3 stale |
+
+- **Receiver**: ESP32 or any scanner using **passive** scan on `ADV_NONCONN_IND` — no connection or active scan required.
+- **Build** (MCUboot sysbuild):
+
+```bash
+west build -b FlightCap_nRF52833 applications/flightcap-prod --sysbuild
+```
+
 ## Shared Libraries
 
 | Path | Purpose |
@@ -127,3 +153,11 @@ west build -b FlightCap_nRF52833 applications/flightcap-demo --sysbuild
 3. Distance `sample_count` reaches ≥4 within a few seconds when ToF is populated.
 4. Magnet present: advertising stops; release magnet — telemetry resumes, filter cleared.
 5. DFU: nRF Connect Device Manager can upload via SMP service in scan response.
+
+### `flightcap-prod`
+
+1. RTT shows boot HW checks and per-cycle `dist_mm`, `interactions`, `seq`, `flags`.
+2. BLE sniffer: non-connectable packets every ~500 ms for 10 s, then ~10 s silence.
+3. Manufacturer data company ID `0x4E48`, magic `0xA5`, version `0x01`.
+4. Tap/shake during advertise window → `interactions` > 0; counter resets after window.
+5. `P0.09` HIGH only during ToF sampling (~100–400 ms per cycle).
