@@ -11,6 +11,7 @@
 
 #include "dfu_mode.h"
 #include "telemetry_adv.h"
+#include "vbatt_zephyr.h"
 #include "vl53l0x_zephyr.h"
 
 LOG_MODULE_REGISTER(prod_state, LOG_LEVEL_INF);
@@ -645,11 +646,13 @@ static int sample_tof_average(const struct prod_context *ctx, int16_t *distance_
 	uint32_t sum = 0U;
 	int samples_ok = 0;
 	int ret;
-	uint8_t flags = TELEM_FLAG_INTERACT_VALID;
 
 	if (!distance_mm_out || !flags_out) {
 		return -EINVAL;
 	}
+
+	/* Preserve flags already set by caller (e.g. TELEM_FLAG_VBATT_VALID). */
+	uint8_t flags = *flags_out;
 
 	if (ctx->tof_dev == NULL) {
 		*distance_mm_out = INT16_MIN;
@@ -704,14 +707,35 @@ static int sample_tof_average(const struct prod_context *ctx, int16_t *distance_
 	return 0;
 }
 
-static int run_advertise_window(struct prod_context *ctx, int16_t distance_mm, uint8_t flags,
-				enum prod_wait_mode wait_mode)
+static void sample_vbatt(uint16_t *vbatt_mv_out, uint8_t *flags_io)
+{
+	int32_t mv = 0;
+	int ret;
+
+	if (vbatt_mv_out == NULL || flags_io == NULL) {
+		return;
+	}
+
+	*vbatt_mv_out = 0U;
+
+	ret = vbatt_read_mv(&mv);
+	if (ret < 0 || mv <= 0 || mv > UINT16_MAX) {
+		return;
+	}
+
+	*vbatt_mv_out = (uint16_t)mv;
+	*flags_io |= TELEM_FLAG_VBATT_VALID;
+}
+
+static int run_advertise_window(struct prod_context *ctx, int16_t distance_mm, uint16_t vbatt_mv,
+				uint8_t flags, enum prod_wait_mode wait_mode)
 {
 	int ret;
 	int64_t end_ms = k_uptime_get() + ADV_WINDOW_MS;
 
 	ret = telemetry_adv_publish(distance_mm,
-				    (uint16_t)MIN(interactions_snapshot(ctx), UINT16_MAX), flags);
+				    (uint16_t)MIN(interactions_snapshot(ctx), UINT16_MAX), vbatt_mv,
+				    flags);
 	if (ret < 0) {
 		return ret;
 	}
@@ -727,7 +751,7 @@ static int run_advertise_window(struct prod_context *ctx, int16_t distance_mm, u
 		uint32_t remaining = (uint32_t)(end_ms - k_uptime_get());
 		uint32_t step = MIN(ADV_UPDATE_MS, remaining);
 
-		ret = telemetry_adv_publish(distance_mm, count, flags);
+		ret = telemetry_adv_publish(distance_mm, count, vbatt_mv, flags);
 		if (ret < 0) {
 			(void)telemetry_adv_stop();
 			return ret;
@@ -865,7 +889,10 @@ static enum prod_mode run_loop(struct prod_context *ctx)
 
 	while (1) {
 		int16_t distance_mm = INT16_MIN;
+		uint16_t vbatt_mv = 0U;
 		uint8_t flags = TELEM_FLAG_INTERACT_VALID;
+
+		sample_vbatt(&vbatt_mv, &flags);
 
 		if (face_up_debounced(ctx)) {
 			enter_shelf(ctx);
@@ -879,7 +906,7 @@ static enum prod_mode run_loop(struct prod_context *ctx)
 
 		leds_pulse_once(ctx, LED_ADV_PULSE_MS);
 
-		ret = run_advertise_window(ctx, distance_mm, flags, PROD_WAIT_MODE_RUN_ADV);
+		ret = run_advertise_window(ctx, distance_mm, vbatt_mv, flags, PROD_WAIT_MODE_RUN_ADV);
 		if (ret == 2) {
 			return enter_dfu_mode(ctx);
 		}
@@ -945,9 +972,12 @@ static enum prod_mode pair_loop(struct prod_context *ctx)
 	int ret;
 
 	while (1) {
+		uint16_t vbatt_mv = 0U;
 		uint8_t flags = TELEM_FLAG_INTERACT_VALID | TELEM_FLAG_PAIR_MODE;
 
-		ret = run_advertise_window(ctx, last_dist, flags, PROD_WAIT_MODE_PAIR);
+		sample_vbatt(&vbatt_mv, &flags);
+
+		ret = run_advertise_window(ctx, last_dist, vbatt_mv, flags, PROD_WAIT_MODE_PAIR);
 		if (ret == 2) {
 			return enter_dfu_mode(ctx);
 		}

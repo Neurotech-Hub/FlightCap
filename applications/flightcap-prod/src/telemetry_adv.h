@@ -13,13 +13,14 @@
  */
 #define TELEM_ADV_COMPANY_ID 0x4E48U // NH
 #define TELEM_ADV_MAGIC 0xA5U
-#define TELEM_ADV_VERSION 0x02U
+#define TELEM_ADV_VERSION 0x03U
 
 #define TELEM_FLAG_DIST_VALID BIT(0)
 #define TELEM_FLAG_INTERACT_VALID BIT(1)
 #define TELEM_FLAG_TOF_ERR BIT(2)
 #define TELEM_FLAG_STALE          BIT(3)
 #define TELEM_FLAG_PAIR_MODE      BIT(4)
+#define TELEM_FLAG_VBATT_VALID    BIT(5)
 
 #pragma pack(push, 1)
 typedef struct
@@ -32,10 +33,12 @@ typedef struct
 	int16_t distance_mm;
 	uint16_t interactions;
 	uint8_t flags;
+	uint16_t vbatt_mv;
 } TelemetryAdv;
 #pragma pack(pop)
 
-int telemetry_adv_publish(int16_t distance_mm, uint16_t interactions, uint8_t flags);
+int telemetry_adv_publish(int16_t distance_mm, uint16_t interactions, uint16_t vbatt_mv,
+			  uint8_t flags);
 int telemetry_adv_start(void);
 int telemetry_adv_stop(void);
 void telemetry_adv_bt_disabled(void);

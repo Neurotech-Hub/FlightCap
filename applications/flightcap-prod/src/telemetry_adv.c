@@ -23,6 +23,7 @@ static TelemetryAdv adv_payload = {
 
 static int16_t last_distance_mm = INT16_MIN;
 static uint16_t last_interactions;
+static uint16_t last_vbatt_mv;
 static bool adv_running;
 static bool device_addr_logged;
 static struct bt_le_adv_param adv_param;
@@ -90,18 +91,22 @@ static void telemetry_adv_param_init(void)
 	telemetry_adv_param_update();
 }
 
-int telemetry_adv_publish(int16_t distance_mm, uint16_t interactions, uint8_t flags)
+int telemetry_adv_publish(int16_t distance_mm, uint16_t interactions, uint16_t vbatt_mv,
+			  uint8_t flags)
 {
-	bool changed = (distance_mm != last_distance_mm) || (interactions != last_interactions);
+	bool changed = (distance_mm != last_distance_mm) || (interactions != last_interactions) ||
+		       (vbatt_mv != last_vbatt_mv);
 
 	adv_payload.distance_mm = distance_mm;
 	adv_payload.interactions = interactions;
+	adv_payload.vbatt_mv = vbatt_mv;
 	adv_payload.flags = flags;
 
 	if (changed) {
 		adv_payload.seq++;
 		last_distance_mm = distance_mm;
 		last_interactions = interactions;
+		last_vbatt_mv = vbatt_mv;
 	}
 
 	if (!adv_running) {
