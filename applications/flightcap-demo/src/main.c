@@ -30,7 +30,7 @@ LOG_MODULE_REGISTER(flightcap_demo, LOG_LEVEL_INF);
 #define WINDOW_MS 1000U
 #define LED_FLASH_MS 50U
 #define FAULT_BLINK_MS 100U
-#define MOTION_THRESHOLD_MG 3
+#define MOTION_THRESHOLD_MG 14
 #define MOTION_DURATION_SAMPLES 0
 #define TOF_POLL_INTERVAL_MS 5U
 #define TOF_THREAD_STACK_SIZE 2048
@@ -381,7 +381,8 @@ int main(void)
 	{
 		struct flightcap_hw_status hw = {0};
 
-		(void)flightcap_hw_check(FLIGHTCAP_HW_VBATT | FLIGHTCAP_HW_ACCEL | FLIGHTCAP_HW_TOF,
+		(void)flightcap_hw_check(FLIGHTCAP_HW_VBATT | FLIGHTCAP_HW_ACCEL | FLIGHTCAP_HW_TOF |
+									 FLIGHTCAP_HW_FLASH,
 								 &hw);
 
 		if (hw.tof_ok)
@@ -396,6 +397,16 @@ int main(void)
 			LOG_ERR("VL53L0X probe failed -- continuing without ToF");
 			tof_dev = NULL;
 		}
+#if IS_ENABLED(CONFIG_SPI_NOR)
+		if (hw.flash_ok)
+		{
+			LOG_INF("SPI NOR present");
+		}
+		else
+		{
+			LOG_INF("SPI NOR absent — continuing without external flash");
+		}
+#endif
 	}
 
 	ret = lis2dh12_zephyr_init(&lis2dh12);

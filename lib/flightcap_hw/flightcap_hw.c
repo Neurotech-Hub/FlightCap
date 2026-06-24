@@ -6,9 +6,12 @@
 #include <zephyr/logging/log.h>
 
 #include "lis2dh12_zephyr.h"
-#include "spi_nor_zephyr.h"
 #include "vbatt_zephyr.h"
 #include "vl53l0x_zephyr.h"
+
+#if IS_ENABLED(CONFIG_SPI_NOR)
+#include "spi_nor_zephyr.h"
+#endif
 
 LOG_MODULE_REGISTER(flightcap_hw, LOG_LEVEL_INF);
 
@@ -19,6 +22,20 @@ static const char *hw_result(bool requested, bool ok)
 	}
 
 	return ok ? "OK" : "FAIL";
+}
+
+static const char *hw_flash_result(bool requested, bool ok)
+{
+	if (!requested) {
+		return "SKIP";
+	}
+
+#if IS_ENABLED(CONFIG_SPI_NOR)
+	return ok ? "present" : "absent";
+#else
+	ARG_UNUSED(ok);
+	return "n/a";
+#endif
 }
 
 int flightcap_hw_check(unsigned int mask, struct flightcap_hw_status *status)
@@ -59,18 +76,20 @@ int flightcap_hw_check(unsigned int mask, struct flightcap_hw_status *status)
 	}
 
 	if (mask & FLIGHTCAP_HW_FLASH) {
-		err = spi_nor_zephyr_check(NULL);
+#if IS_ENABLED(CONFIG_SPI_NOR)
+		err = spi_nor_zephyr_probe(NULL);
 		out->flash_ok = (err == 0);
-		if (!out->flash_ok) {
-			ret = -EIO;
-		}
+#else
+		out->flash_ok = false;
+#endif
+		/* External SPI NOR is optional — never fail the overall HW check. */
 	}
 
 	LOG_INF("HW check: vbatt=%s accel=%s tof=%s flash=%s",
 		hw_result((mask & FLIGHTCAP_HW_VBATT) != 0, out->vbatt_ok),
 		hw_result((mask & FLIGHTCAP_HW_ACCEL) != 0, out->accel_ok),
 		hw_result((mask & FLIGHTCAP_HW_TOF) != 0, out->tof_ok),
-		hw_result((mask & FLIGHTCAP_HW_FLASH) != 0, out->flash_ok));
+		hw_flash_result((mask & FLIGHTCAP_HW_FLASH) != 0, out->flash_ok));
 
 	return ret;
 }

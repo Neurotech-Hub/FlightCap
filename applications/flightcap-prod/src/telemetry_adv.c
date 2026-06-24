@@ -1,5 +1,7 @@
 #include "telemetry_adv.h"
 
+#include <string.h>
+
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/logging/log.h>
@@ -8,6 +10,9 @@
 LOG_MODULE_REGISTER(telemetry_adv, LOG_LEVEL_INF);
 
 #define ADV_INTERVAL_UNITS 0x0320U /* 500 ms (0.625 ms units) */
+
+#define DEVICE_NAME CONFIG_BT_DEVICE_NAME
+#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1U)
 
 static TelemetryAdv adv_payload = {
 	.company_id = TELEM_ADV_COMPANY_ID,
@@ -18,14 +23,55 @@ static TelemetryAdv adv_payload = {
 static int16_t last_distance_mm = INT16_MIN;
 static uint16_t last_interactions;
 static bool adv_running;
+static bool device_addr_logged;
 
+static void telemetry_refresh_device_addr(void)
+{
+	bt_addr_le_t addrs[1];
+	size_t count = 1;
+
+	bt_id_get(addrs, &count);
+	if (count == 0U) {
+		memset(adv_payload.device_addr, 0, sizeof(adv_payload.device_addr));
+		return;
+	}
+
+	memcpy(adv_payload.device_addr, addrs[0].a.val, sizeof(adv_payload.device_addr));
+
+	if (!device_addr_logged) {
+		LOG_INF("telemetry device_addr %02X:%02X:%02X:%02X:%02X:%02X",
+			adv_payload.device_addr[0], adv_payload.device_addr[1],
+			adv_payload.device_addr[2], adv_payload.device_addr[3],
+			adv_payload.device_addr[4], adv_payload.device_addr[5]);
+		device_addr_logged = true;
+	}
+}
+
+/*
+ * Primary AD: flags + manufacturer telemetry only (passive-scan friendly).
+ * Device name goes in scan response (scannable non-connectable ADV_SCAN_IND).
+ */
 static struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_MANUFACTURER_DATA, (uint8_t *)&adv_payload, sizeof(adv_payload)),
 };
 
-static const struct bt_le_adv_param adv_param =
-	BT_LE_ADV_PARAM_INIT(0, ADV_INTERVAL_UNITS, ADV_INTERVAL_UNITS, NULL);
+static const struct bt_data sd[] = {
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
+};
+
+/* On-air AD element size: 1 len + 1 type + payload. */
+#define AD_ELEM_ON_AIR_LEN(payload_len) (2U + (payload_len))
+#define ADV_PRIMARY_ON_AIR_LEN                                                             \
+	(AD_ELEM_ON_AIR_LEN(1U) + AD_ELEM_ON_AIR_LEN(sizeof(TelemetryAdv)))
+#define ADV_SCAN_RSP_ON_AIR_LEN AD_ELEM_ON_AIR_LEN(DEVICE_NAME_LEN)
+
+BUILD_ASSERT(ADV_PRIMARY_ON_AIR_LEN <= BT_GAP_ADV_MAX_ADV_DATA_LEN);
+BUILD_ASSERT(ADV_SCAN_RSP_ON_AIR_LEN <= BT_GAP_ADV_MAX_ADV_DATA_LEN);
+
+static const struct bt_le_adv_param adv_param = BT_LE_ADV_PARAM_INIT(
+	BT_LE_ADV_OPT_USE_IDENTITY | BT_LE_ADV_OPT_SCANNABLE, ADV_INTERVAL_UNITS,
+	ADV_INTERVAL_UNITS, NULL);
 
 int telemetry_adv_publish(int16_t distance_mm, uint16_t interactions, uint8_t flags)
 {
@@ -45,7 +91,7 @@ int telemetry_adv_publish(int16_t distance_mm, uint16_t interactions, uint8_t fl
 		return 0;
 	}
 
-	int err = bt_le_adv_update_data(ad, ARRAY_SIZE(ad), NULL, 0);
+	int err = bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 
 	if (err != 0) {
 		LOG_ERR("bt_le_adv_update_data failed (%d)", err);
@@ -63,14 +109,17 @@ int telemetry_adv_start(void)
 		return 0;
 	}
 
-	err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
+	telemetry_refresh_device_addr();
+
+	err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err != 0) {
 		LOG_ERR("bt_le_adv_start failed (%d)", err);
 		return err;
 	}
 
 	adv_running = true;
-	LOG_INF("BLE beacon started (non-conn, %u ms interval)", (ADV_INTERVAL_UNITS * 625U) / 1000U);
+	LOG_INF("BLE beacon started (non-conn scannable, %u ms interval, name \"%s\")",
+		(ADV_INTERVAL_UNITS * 625U) / 1000U, DEVICE_NAME);
 	return 0;
 }
 
@@ -83,13 +132,29 @@ int telemetry_adv_stop(void)
 	}
 
 	err = bt_le_adv_stop();
+	adv_running = false;
 	if (err != 0) {
 		LOG_ERR("bt_le_adv_stop failed (%d)", err);
 		return err;
 	}
 
-	adv_running = false;
 	return 0;
+}
+
+void telemetry_adv_bt_disabled(void)
+{
+	adv_running = false;
+	device_addr_logged = false;
+	memset(adv_payload.device_addr, 0, sizeof(adv_payload.device_addr));
+}
+
+void telemetry_adv_get_device_addr(uint8_t addr[6])
+{
+	if (addr == NULL) {
+		return;
+	}
+
+	memcpy(addr, adv_payload.device_addr, 6U);
 }
 
 bool telemetry_adv_active(void)

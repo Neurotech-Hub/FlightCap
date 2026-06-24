@@ -127,10 +127,15 @@ static bool magnet_is_active(const struct prod_context *ctx)
 static void magnet_hold_to_idle(void)
 {
 	magnet_phase = MAGNET_HOLD_IDLE;
+	magnet_hold_origin_ms = 0;
 }
 
 static bool magnet_hold_reached_ms(int64_t now, uint32_t ms)
 {
+	if (magnet_hold_origin_ms == 0) {
+		return false;
+	}
+
 	return (now - magnet_hold_origin_ms) >= (int64_t)ms;
 }
 
@@ -196,8 +201,6 @@ static void magnet_hold_poll(const struct prod_context *ctx)
 		}
 		return;
 	}
-
-	magnet_try_dfu_enter(ctx, active, now);
 
 	switch (magnet_phase) {
 	case MAGNET_HOLD_IDLE:
@@ -430,20 +433,31 @@ static int ensure_bt_enabled(struct prod_context *ctx)
 {
 	int ret = 0;
 
-	if (ctx->bt_was_disabled) {
-		ret = bt_enable(NULL);
-		if (ret == 0) {
-			ctx->bt_was_disabled = false;
-		}
+	if (!ctx->bt_was_disabled) {
+		return 0;
 	}
 
-	return ret;
+	ret = bt_enable(NULL);
+	if (ret != 0) {
+		LOG_ERR("bt_enable failed (%d)", ret);
+		return ret;
+	}
+
+	ctx->bt_was_disabled = false;
+
+	if (!bt_is_ready()) {
+		LOG_ERR("bt_enable ok but stack not ready");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
 static void enter_shelf(struct prod_context *ctx)
 {
 	(void)telemetry_adv_stop();
 	(void)bt_disable();
+	telemetry_adv_bt_disabled();
 	ctx->bt_was_disabled = true;
 
 	if (ctx->tof_dev != NULL) {
@@ -750,9 +764,17 @@ static enum prod_mode prepare_pair_from_shelf(struct prod_context *ctx)
 
 	if (ret < 0) {
 		LOG_ERR("shelf->pair sensor restore failed (%d)", ret);
-	} else {
-		(void)ensure_bt_enabled(ctx);
+		enter_shelf(ctx);
+		return PROD_MODE_SHELF;
 	}
+
+	ret = ensure_bt_enabled(ctx);
+	if (ret < 0) {
+		LOG_ERR("shelf->pair bt_enable failed (%d)", ret);
+		enter_shelf(ctx);
+		return PROD_MODE_SHELF;
+	}
+
 	leds_set(ctx, 0);
 	return apply_pair_toggle(ctx);
 }
@@ -865,6 +887,7 @@ static enum prod_mode pair_loop(struct prod_context *ctx)
 		}
 		if (ret < 0) {
 			LOG_ERR("pair adv window failed (%d)", ret);
+			k_sleep(K_MSEC(1000));
 		}
 	}
 }

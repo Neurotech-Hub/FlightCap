@@ -66,7 +66,8 @@ int main(void)
 	{
 		struct flightcap_hw_status hw = {0};
 
-		ret = flightcap_hw_check(FLIGHTCAP_HW_VBATT | FLIGHTCAP_HW_ACCEL, &hw);
+		ret = flightcap_hw_check(FLIGHTCAP_HW_VBATT | FLIGHTCAP_HW_ACCEL | FLIGHTCAP_HW_FLASH,
+					 &hw);
 		if (ret < 0) {
 			LOG_WRN("Hardware check reported failures — continuing");
 		}

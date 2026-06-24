@@ -5,6 +5,7 @@
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
+#include <zephyr/sys/util.h>
 
 LOG_MODULE_REGISTER(dfu_mode, LOG_LEVEL_INF);
 
@@ -17,14 +18,26 @@ LOG_MODULE_REGISTER(dfu_mode, LOG_LEVEL_INF);
 static struct bt_conn *dfu_conn;
 static bool dfu_adv_running;
 
+/*
+ * SMP UUID in primary AD; device name in scan response only.
+ * Both fields must fit in separate 31-byte legacy AD buffers.
+ */
 static const struct bt_data dfu_ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, SMP_BT_SVC_UUID_VAL),
 };
 
 static const struct bt_data dfu_sd[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
-	BT_DATA_BYTES(BT_DATA_UUID128_SOME, SMP_BT_SVC_UUID_VAL),
 };
+
+#define AD_ELEM_ON_AIR_LEN(payload_len) (2U + (payload_len))
+#define DFU_PRIMARY_ON_AIR_LEN                                                             \
+	(AD_ELEM_ON_AIR_LEN(1U) + AD_ELEM_ON_AIR_LEN(BT_UUID_SIZE_128))
+#define DFU_SCAN_RSP_ON_AIR_LEN AD_ELEM_ON_AIR_LEN(DEVICE_NAME_LEN)
+
+BUILD_ASSERT(DFU_PRIMARY_ON_AIR_LEN <= BT_GAP_ADV_MAX_ADV_DATA_LEN);
+BUILD_ASSERT(DFU_SCAN_RSP_ON_AIR_LEN <= BT_GAP_ADV_MAX_ADV_DATA_LEN);
 
 static const struct bt_le_adv_param dfu_adv_param =
 	BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONN, DFU_ADV_INT_MIN, DFU_ADV_INT_MAX, NULL);
@@ -90,11 +103,11 @@ static int dfu_adv_stop(void)
 
 	if (dfu_adv_running) {
 		ret = bt_le_adv_stop();
+		dfu_adv_running = false;
 		if (ret < 0) {
 			LOG_ERR("DFU adv stop failed (%d)", ret);
 			return ret;
 		}
-		dfu_adv_running = false;
 	}
 
 	return ret;

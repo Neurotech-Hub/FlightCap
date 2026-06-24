@@ -9,6 +9,7 @@
 #define FLIGHTCAP_HW_VBATT BIT(0)
 #define FLIGHTCAP_HW_ACCEL BIT(1)
 #define FLIGHTCAP_HW_TOF   BIT(2)
+/* Optional: logs present/absent; never fails flightcap_hw_check(). */
 #define FLIGHTCAP_HW_FLASH BIT(3)
 
 struct flightcap_hw_status {

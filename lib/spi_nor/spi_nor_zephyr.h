@@ -4,6 +4,8 @@
 #include <zephyr/device.h>
 
 int spi_nor_zephyr_check(const struct device **flash_out);
+/* Optional boot probe: no ERR logs on failure (see flightcap_hw_check). */
+int spi_nor_zephyr_probe(const struct device **flash_out);
 int spi_nor_zephyr_verify(const struct device *flash);
 
 #endif

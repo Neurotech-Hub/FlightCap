@@ -38,12 +38,21 @@ The firmware runs an explicit state machine (`prod_state.c`):
 
 **Interactions** = LIS2DH12 motion events on INT1 since the last counter reset (after each 10 s advertise window).
 
-## Pair mode (address pairing menu)
+## Pair mode (device assignment menu)
 
 - Enter/exit via magnet hold toggle (see above).
 - **No ToF sampling** and **no sleep** — continuous 10 s advertise windows back-to-back.
 - Filter on **`flags & 0x10`** (`TELEM_FLAG_PAIR_MODE`, bit 4) to show devices in a pair/assign UI.
-- `distance_mm` is typically `INT16_MIN` (invalid); use the BLE advertiser MAC as the device identifier.
+- **`device_addr[6]`** in manufacturer data is the **stable per-device ID** — save these 6 bytes when the user assigns a cap. Do not use the scanner’s BLE MAC field or `seq` as the device ID.
+
+## Device identity (`device_addr`)
+
+Every advertisement (Run and Pair) includes a **6-byte BLE identity address** in the manufacturer payload (`version >= 0x02`):
+
+- Same byte order as a normal MAC string (`C9:21:FE:5D:EF:F3` → bytes `C9 21 FE 5D EF F3`).
+- Sourced from the nRF52833 **static random identity** (programmed in hardware; stable for the life of the chip).
+- **Use this as your saved “device ID”** on the receiver — filter future packets with `memcmp(device_addr, saved, 6) == 0`.
+- Reject `version < 0x02` frames if you require `device_addr` (older firmware).
 
 ## Shelf mode
 
@@ -56,12 +65,11 @@ The firmware runs an explicit state machine (`prod_state.c`):
 
 ## Receiver requirements
 
-- **Passive scan only** — do not connect; the device will not accept connections.
-- **Do not require active scan** — telemetry is in the **primary advertisement**, not scan response.
-- **Do not expect a device name** in the advertisement (name is not broadcast to save AD space).
-- Filter on **manufacturer data** with company ID **`0x4E48`** and magic byte **`0xA5`**.
+- **Passive scan** is enough for telemetry — manufacturer data is in the **primary advertisement**.
+- **Active scan** (or a scanner that reads scan response) shows the device name **`FCap`** (`CONFIG_BT_DEVICE_NAME`) for debugging.
+- Filter on **manufacturer data** with company ID **`0x4E48`**, magic **`0xA5`**, and **`version == 0x02`**. Match assigned devices by **`device_addr[6]`** inside the payload (passive scan is enough).
 
-Advertisement type: legacy **non-connectable, non-scannable** (`ADV_NONCONN_IND`).
+Advertisement type: legacy **non-connectable, scannable** (`ADV_SCAN_IND`); telemetry in primary AD, name in scan response.
 
 During Run mode **sleep** (10–11 s) you will see **no packets**. Shelf mode also has no BLE traffic.
 
@@ -69,25 +77,28 @@ During Run mode **sleep** (10–11 s) you will see **no packets**. Shelf mode al
 
 Source of truth: [`src/telemetry_adv.h`](src/telemetry_adv.h).
 
-Total payload: **11 bytes**, little-endian, immediately after the 2-byte company ID in the BLE AD manufacturer field.
+Total payload: **17 bytes**, little-endian multi-byte fields, immediately after the 2-byte company ID in the BLE AD manufacturer field.
 
 On the wire, the full manufacturer-specific value is:
 
 ```
-[0x48, 0x4E,  magic, version, seq_lo, seq_hi, dist_lo, dist_hi, int_lo, int_hi, flags]
+[0x48, 0x4E,  magic, version, addr0..addr5, seq_lo, seq_hi, dist_lo, dist_hi, int_lo, int_hi, flags]
  ^^^^^^^^^^^
  company_id = 0x4E48 (LE)
+              ^^^^^^^^^^^^^^^^
+              device_addr[6] — save this as the device ID
 ```
 
 | Byte | Field | Type | Description |
 | --- | --- | --- | --- |
 | 0–1 | `company_id` | `uint16` LE | **`0x4E48`** — provisional Neurotech Hub ID (`'N' \| 'H'<<8`) |
 | 2 | `magic` | `uint8` | **`0xA5`** — frame marker; reject if wrong |
-| 3 | `version` | `uint8` | **`0x01`** — schema version |
-| 4–5 | `seq` | `uint16` LE | Increments when `distance_mm` or `interactions` changes; wraps naturally |
-| 6–7 | `distance_mm` | `int16` LE | Average ToF distance in millimeters |
-| 8–9 | `interactions` | `uint16` LE | Motion event count for current window |
-| 10 | `flags` | `uint8` | Status bits (see below) |
+| 3 | `version` | `uint8` | **`0x02`** — schema version (requires `device_addr`) |
+| 4–9 | `device_addr` | `uint8[6]` | **Per-device ID** — BLE identity, MSB-first byte order |
+| 10–11 | `seq` | `uint16` LE | Increments when `distance_mm` or `interactions` changes; wraps naturally |
+| 12–13 | `distance_mm` | `int16` LE | Average ToF distance in millimeters |
+| 14–15 | `interactions` | `uint16` LE | Motion event count for current window |
+| 16 | `flags` | `uint8` | Status bits (see below) |
 
 ### `distance_mm`
 
@@ -108,7 +119,13 @@ On the wire, the full manufacturer-specific value is:
 
 Typical healthy Run packet: `flags & 0x03 == 0x03`.
 
-Pair mode packet: `(flags & 0x10) != 0` — use for pair-menu filtering.
+Pair mode packet: `(flags & 0x10) != 0` — use for pair-menu filtering; **`device_addr` is still present** and is what you save on assign.
+
+### `device_addr`
+
+- **Always present in v0x02+** — copy all 6 bytes to non-volatile storage when the user picks a device.
+- Compare with `memcmp(a, b, 6) == 0` — do not format as a string unless displaying to the user.
+- All-zero `device_addr` means the transmitter has not yet populated identity (should not happen during normal advertise); ignore those frames.
 
 ### `seq`
 
@@ -125,7 +142,7 @@ Works with any stack that exposes raw AD manufacturer bytes (ESP32 `BLEAdvertise
 
 static constexpr uint16_t FLIGHTCAP_COMPANY_ID = 0x4E48;
 static constexpr uint8_t  FLIGHTCAP_MAGIC      = 0xA5;
-static constexpr uint8_t  FLIGHTCAP_VERSION    = 0x01;
+static constexpr uint8_t  FLIGHTCAP_VERSION    = 0x02;
 
 static constexpr uint8_t FLAG_DIST_VALID     = 1u << 0;
 static constexpr uint8_t FLAG_INTERACT_VALID = 1u << 1;
@@ -137,6 +154,7 @@ struct FlightCapTelemetry {
   uint16_t company_id;
   uint8_t  magic;
   uint8_t  version;
+  uint8_t  device_addr[6];
   uint16_t seq;
   int16_t  distance_mm;
   uint16_t interactions;
@@ -166,16 +184,55 @@ bool flightcap_parse(const uint8_t *data, size_t len, FlightCapTelemetry *out) {
   return true;
 }
 
+bool flightcap_addr_valid(const FlightCapTelemetry *t) {
+  if (!t) return false;
+  for (int i = 0; i < 6; i++) {
+    if (t->device_addr[i] != 0) return true;
+  }
+  return false;
+}
+
+bool flightcap_addr_match(const FlightCapTelemetry *t, const uint8_t saved[6]) {
+  return t && saved && memcmp(t->device_addr, saved, 6) == 0;
+}
+
+void flightcap_addr_format(const uint8_t addr[6], char *buf, size_t buflen) {
+  // Optional UI helper only — store raw bytes, not strings.
+  snprintf(buf, buflen, "%02X:%02X:%02X:%02X:%02X:%02X",
+           addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+}
+
+// Saved IDs (example — use NVS / EEPROM / flash in production)
+static uint8_t assigned_addrs[8][6];
+static size_t  assigned_count = 0;
+
+bool flightcap_is_assigned(const uint8_t addr[6]) {
+  for (size_t i = 0; i < assigned_count; i++) {
+    if (memcmp(assigned_addrs[i], addr, 6) == 0) return true;
+  }
+  return false;
+}
+
+void flightcap_assign(const uint8_t addr[6]) {
+  if (assigned_count >= 8 || flightcap_is_assigned(addr)) return;
+  memcpy(assigned_addrs[assigned_count++], addr, 6);
+}
+
 // Example handler (pseudo — adapt to your BLE library):
 void on_ble_advert(const uint8_t *mfg, size_t mfg_len) {
   FlightCapTelemetry t;
 
-  if (!flightcap_parse(mfg, mfg_len, &t)) {
+  if (!flightcap_parse(mfg, mfg_len, &t) || !flightcap_addr_valid(&t)) {
     return;
   }
 
   if (t.flags & FLAG_PAIR_MODE) {
-    // Show in pair/assign menu; identify by BLE MAC, not payload device ID
+    // Pair menu: list unassigned caps; on user tap call flightcap_assign(t.device_addr)
+    return;
+  }
+
+  // Run mode: only process caps the user has assigned
+  if (!flightcap_is_assigned(t.device_addr)) {
     return;
   }
 
@@ -190,6 +247,12 @@ void on_ble_advert(const uint8_t *mfg, size_t mfg_len) {
                 tof_err);
 }
 ```
+
+### Receiver workflow summary
+
+1. **Pair / assign:** Scan for `company_id == 0x4E48`, `magic == 0xA5`, `version == 0x02`, `flags & PAIR_MODE`. Show `device_addr` (formatted for display if needed). On user confirm, **save the 6 raw bytes**.
+2. **Run / track:** On each advert, parse payload and **`memcmp(device_addr, saved, 6)`** — ignore packets from other caps.
+3. **Do not** use BLE scanner MAC, device name (`FCap`), or `seq` as the device ID.
 
 ### ESP32 Arduino (Bluedroid) hint
 
@@ -206,8 +269,6 @@ Use **passive scan** (`setActiveScan(false)`). Active scan is not required.
 
 - Connectable advertisements (except during Run/Pair adv windows — still non-connectable)
 - GATT services or characteristics
-- Device name `"FlightCap-Prod"` in the air (Kconfig name only; not placed in AD)
-- Scan response data
 - Packets during Run sleep or shelf mode
 
 ## Timing expectations for receiver logic

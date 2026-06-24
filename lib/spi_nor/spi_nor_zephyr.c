@@ -19,7 +19,7 @@ LOG_MODULE_REGISTER(spi_nor_zephyr, LOG_LEVEL_INF);
 #define VERIFY_SECTOR_SIZE 4096U
 #define VERIFY_PATTERN_LEN 256U
 
-int spi_nor_zephyr_check(const struct device **flash_out)
+static int spi_nor_zephyr_check_impl(const struct device **flash_out, bool quiet)
 {
 #if DT_NODE_EXISTS(FLASH_NODE)
 	const struct device *flash = DEVICE_DT_GET(FLASH_NODE);
@@ -32,49 +32,99 @@ int spi_nor_zephyr_check(const struct device **flash_out)
 	}
 
 	if (!device_is_ready(flash)) {
-		LOG_ERR("SPI NOR check FAIL: flash device not ready");
+		if (quiet) {
+			LOG_DBG("SPI NOR not ready");
+		} else {
+			LOG_ERR("SPI NOR check FAIL: flash device not ready");
+		}
 		return -ENODEV;
 	}
 
+#if IS_ENABLED(CONFIG_FLASH_JESD216_API)
 	ret = flash_read_jedec_id(flash, jedec);
 	if (ret < 0) {
-		LOG_ERR("SPI NOR check FAIL: JEDEC read (%d)", ret);
+		if (quiet) {
+			LOG_DBG("SPI NOR JEDEC read failed (%d)", ret);
+		} else {
+			LOG_ERR("SPI NOR check FAIL: JEDEC read (%d)", ret);
+		}
 		return ret;
 	}
+#else
+	if (quiet) {
+		LOG_DBG("SPI NOR probe needs CONFIG_FLASH_JESD216_API");
+	} else {
+		LOG_ERR("SPI NOR check FAIL: enable CONFIG_FLASH_JESD216_API");
+	}
+	return -ENOTSUP;
+#endif
 
 	if (jedec[0] != EXPECTED_JEDEC_0 || jedec[1] != EXPECTED_JEDEC_1 ||
 	    jedec[2] != EXPECTED_JEDEC_2) {
-		LOG_ERR("SPI NOR check FAIL: JEDEC %02x %02x %02x (expected c2 28 14)",
-			jedec[0], jedec[1], jedec[2]);
+		if (quiet) {
+			LOG_DBG("SPI NOR JEDEC %02x %02x %02x (expected c2 28 14)", jedec[0],
+				jedec[1], jedec[2]);
+		} else {
+			LOG_ERR("SPI NOR check FAIL: JEDEC %02x %02x %02x (expected c2 28 14)",
+				jedec[0], jedec[1], jedec[2]);
+		}
 		return -ENODEV;
 	}
 
-	LOG_INF("JEDEC ID: %02x %02x %02x OK", jedec[0], jedec[1], jedec[2]);
+	if (!quiet) {
+		LOG_INF("JEDEC ID: %02x %02x %02x OK", jedec[0], jedec[1], jedec[2]);
+	}
 
 	ret = flash_get_size(flash, &size);
 	if (ret < 0) {
-		LOG_ERR("SPI NOR check FAIL: size read (%d)", ret);
+		if (quiet) {
+			LOG_DBG("SPI NOR size read failed (%d)", ret);
+		} else {
+			LOG_ERR("SPI NOR check FAIL: size read (%d)", ret);
+		}
 		return ret;
 	}
 
 	if (size != EXPECTED_FLASH_SIZE) {
-		LOG_ERR("SPI NOR check FAIL: size %llu (expected %u)", size, EXPECTED_FLASH_SIZE);
+		if (quiet) {
+			LOG_DBG("SPI NOR size %llu (expected %u)", size, EXPECTED_FLASH_SIZE);
+		} else {
+			LOG_ERR("SPI NOR check FAIL: size %llu (expected %u)", size,
+				EXPECTED_FLASH_SIZE);
+		}
 		return -ENODEV;
 	}
 
-	LOG_INF("flash size: %u bytes OK", (unsigned int)size);
+	if (!quiet) {
+		LOG_INF("flash size: %u bytes OK", (unsigned int)size);
+	}
 
 	if (flash_out) {
 		*flash_out = flash;
 	}
 
-	LOG_INF("SPI NOR check PASS");
+	if (!quiet) {
+		LOG_INF("SPI NOR check PASS");
+	}
 	return 0;
 #else
 	ARG_UNUSED(flash_out);
-	LOG_ERR("SPI NOR check FAIL: board has no spi-flash alias");
+	ARG_UNUSED(quiet);
+	if (!quiet) {
+		LOG_ERR("SPI NOR check FAIL: board has no spi-flash alias");
+	}
 	return -ENODEV;
 #endif
+}
+
+int spi_nor_zephyr_probe(const struct device **flash_out)
+{
+	return spi_nor_zephyr_check_impl(flash_out, true);
+}
+
+int spi_nor_zephyr_check(const struct device **flash_out)
+{
+	return spi_nor_zephyr_check_impl(flash_out, false);
 }
 
 int spi_nor_zephyr_verify(const struct device *flash)
