@@ -10,7 +10,7 @@ The firmware runs an explicit state machine (`prod_state.c`):
 
 | Mode | Trigger | Behavior |
 | --- | --- | --- |
-| **Run** (default) | Face-down orientation | ~21 s duty cycle: ToF sample → 10 s advertise → 10–11 s sleep (random jitter). Motion on INT1. |
+| **Run** (default) | Face-down orientation | ~20 s duty cycle: ToF sample → 10 s advertise → 10 s sleep (+ per-device offset). Motion on INT1. |
 | **Shelf** | Face-up orientation | BLE off, ToF off, LIS2DH12 low-power with INT2 6D on P0.15. Wake via orientation change. |
 | **Pair** | Magnet 3 s hold + release (toggle) | Adv-only loop (no ToF, no sleep). `TELEM_FLAG_PAIR_MODE` (bit 4) set in every packet. |
 
@@ -32,11 +32,13 @@ The firmware runs an explicit state machine (`prod_state.c`):
 | Phase | Duration | Behavior |
 | --- | --- | --- |
 | ToF sample | ~0.1–0.5 s | Powers VL53L0X rail, takes **10** distance readings, averages to `distance_mm` |
-| Advertise | **10 s** | Non-connectable BLE beacon @ **500 ms** interval; interaction count updates live |
-| Sleep | **10–11 s** | Radio off; 10 s + uniform random 0–1000 ms jitter; accelerometer still counts motion on INT1 |
-| Repeat | — | ~21 s total cycle (advertise fixed 10 s) |
+| Advertise | **10 s** | Non-connectable BLE beacon @ **~100 ms** interval (per-device dither); interaction count updates live |
+| Sleep | **10 s + 0–500 ms** | Radio off; deterministic per-device offset from BLE identity; accelerometer still counts motion on INT1 |
+| Repeat | — | ~20 s total cycle (10 s adv + 10 s sleep; ToF adds ~0.1–0.5 s) |
 
-**Interactions** = LIS2DH12 motion events on INT1 since the last counter reset (after each 10 s advertise window).
+Each cap applies a **one-time phase offset** (0–19 999 ms, derived from `device_addr`) at boot and after shelf→run so nearby caps do not share the same adv/sleep boundary.
+
+**Interactions** = LIS2DH12 motion events on INT1 since the last **60 s accrual reset** (counts during Run advertise, Run sleep, and Pair mode; INT1 off in shelf).
 
 ## Pair mode (device assignment menu)
 
@@ -65,13 +67,21 @@ Every advertisement (Run and Pair) includes a **6-byte BLE identity address** in
 
 ## Receiver requirements
 
-- **Passive scan** is enough for telemetry — manufacturer data is in the **primary advertisement**.
-- **Active scan** (or a scanner that reads scan response) shows the device name **`FCap`** (`CONFIG_BT_DEVICE_NAME`) for debugging.
-- Filter on **manufacturer data** with company ID **`0x4E48`**, magic **`0xA5`**, and **`version == 0x02`**. Match assigned devices by **`device_addr[6]`** inside the payload (passive scan is enough).
+- **Passive scan** is sufficient for telemetry — manufacturer data is in the **primary advertisement** (`device_addr`, `distance_mm`, `interactions`).
+- Enable **active scan** if you also want the **`FCap`** device name from scan response (debugging / UI).
+- Filter on **manufacturer data** with company ID **`0x4E48`**, magic **`0xA5`**, and **`version == 0x02`**. Match assigned devices by **`device_addr[6]`** inside the payload — **not** the scanner-reported BLE MAC.
 
 Advertisement type: legacy **non-connectable, scannable** (`ADV_SCAN_IND`); telemetry in primary AD, name in scan response.
 
-During Run mode **sleep** (10–11 s) you will see **no packets**. Shelf mode also has no BLE traffic.
+During Run mode **sleep** (~10 s + device offset) you will see **no packets**. Shelf mode also has no BLE traffic.
+
+### 10 s scanner duty cycle (Arduino / ESP32)
+
+If your receiver listens for **~10 s every 10 s** (50% scan duty matching the cap’s ~50% advertise duty):
+
+- A full **10 s listen** typically overlaps **multiple seconds** of advertising and yields many packets (~100 ms spacing during on-windows).
+- Occasional **misses are still possible** if your window aligns entirely with the cap’s sleep phase — mitigate with **±1–2 s jitter** on the scanner timer (do not fire scans on a rigid 10.000 s wall-clock grid).
+- **Multi-cap lab:** per-device phase offset spreads caps in time; expect occasional same-channel overlap anyway — identify caps by **`device_addr`** in the payload, not arrival order or scanner MAC.
 
 ## Manufacturer data layout
 
@@ -97,7 +107,7 @@ On the wire, the full manufacturer-specific value is:
 | 4–9 | `device_addr` | `uint8[6]` | **Per-device ID** — BLE identity, MSB-first byte order |
 | 10–11 | `seq` | `uint16` LE | Increments when `distance_mm` or `interactions` changes; wraps naturally |
 | 12–13 | `distance_mm` | `int16` LE | Average ToF distance in millimeters |
-| 14–15 | `interactions` | `uint16` LE | Motion event count for current window |
+| 14–15 | `interactions` | `uint16` LE | Motion events since last 60 s accrual reset |
 | 16 | `flags` | `uint8` | Status bits (see below) |
 
 ### `distance_mm`
@@ -129,7 +139,13 @@ Pair mode packet: `(flags & 0x10) != 0` — use for pair-menu filtering; **`devi
 
 ### `seq`
 
-Use `seq` to detect new telemetry. Same `seq` repeated across consecutive 500 ms adverts is normal if values unchanged. Expect `seq` to bump when interactions increase during the 10 s window.
+Use `seq` to detect new telemetry. Same `seq` repeated across consecutive ~100 ms adverts is normal if values unchanged. Expect `seq` to bump when interactions increase during the current 60 s accrual period.
+
+### `interactions`
+
+- Counts INT1 motion edges; **resets every 60 s** (wall clock), not each advertise window.
+- During Run, the counter keeps accruing through the 10 s advertise burst **and** the ~10 s sleep until the 60 s timer fires.
+- In shelf mode INT1 is off — no new events, but the 60 s timer still runs.
 
 ## Arduino / ESP32 parsing example
 
@@ -263,7 +279,7 @@ if (advertisedDevice.haveManufacturerData()) {
 }
 ```
 
-Use **passive scan** (`setActiveScan(false)`). Active scan is not required.
+Use passive scan by default (`setActiveScan(false)`). Enable active scan only if you need the **`FCap`** name from scan response.
 
 ## What you will not see
 
@@ -276,14 +292,15 @@ Use **passive scan** (`setActiveScan(false)`). Active scan is not required.
 **Run mode:**
 
 ```
-|-- ToF --|-- 10 s advertise @ 500 ms --|-- 10–11 s silent (jittered) --|
-|  ~0.3s  |  ~20 adverts per window      |  0 adverts                   |
+|-- ToF --|-- 10 s advertise @ ~100 ms --|-- ~10 s silent (device offset) --|
+|  ~0.3s  |  ~100 adverts per window      |  0 adverts                      |
 ```
 
-**Pair mode:** continuous 10 s advertise bursts with no silent gap.
+**Pair mode:** continuous 10 s advertise bursts with no silent gap (same ~100 ms interval).
 
-- Debounce duplicate handling: same `seq` + same fields for up to 500 ms is normal.
-- After a **10–11 s** gap (Run only), expect a new burst; `distance_mm` may change every cycle, `interactions` resets to 0 at the start of each new advertise window (then grows during the window).
+- Debounce duplicate handling: same `seq` + same fields for up to ~100 ms is normal.
+- After a **~10 s** gap (Run only), expect a new burst; `distance_mm` may change every cycle; `interactions` continues from the current 60 s accrual period (resets only on the 60 s boundary).
+- Stagger scanner start times by **±1–2 s** when using a fixed 10 s on / 10 s off schedule to reduce alignment with cap sleep windows.
 
 ## Firmware build (reference)
 
@@ -301,6 +318,7 @@ state RUN->SHELF
 INT2_SRC=0x.. orientation_irq
 orientation z_mg=.. face_up=0/1
 state SHELF->RUN
+run cycle phase offset 12345 ms
 state ->PAIR
 magnet_hold phase=Holding
 cycle=N dist_mm=... interactions=... seq=... flags=0x..

@@ -7,7 +7,6 @@
 #include <zephyr/irq.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/random/random.h>
 #include <zephyr/sys/util.h>
 
 #include "dfu_mode.h"
@@ -32,9 +31,11 @@ LOG_MODULE_REGISTER(prod_state, LOG_LEVEL_INF);
 #define TOF_SAMPLES 10U
 #define ADV_WINDOW_MS 10000U
 #define SLEEP_MS 10000U
-#define SLEEP_JITTER_MS 1000U
+#define RUN_CYCLE_MS (ADV_WINDOW_MS + SLEEP_MS)
+#define SLEEP_OFFSET_MAX_MS 500U
 #define ADV_UPDATE_MS 500U
 #define PROD_WAIT_SLICE_MS 50U
+#define INTERACTIONS_ACCRUE_MS 60000U
 
 enum magnet_hold_phase {
 	MAGNET_HOLD_IDLE,
@@ -67,9 +68,17 @@ enum prod_wait_mode {
 	PROD_WAIT_MODE_DFU,
 };
 
+static enum prod_wait_result prod_wait_ms(struct prod_context *ctx, uint32_t ms,
+					  enum prod_wait_mode wait_mode);
+
 static uint8_t shelf_int2_baseline;
 static uint8_t face_up_streak;
 static uint8_t shelf_leave_streak;
+static int64_t interactions_accrue_origin_ms;
+static uint32_t run_cycle_phase_ms;
+static uint32_t run_sleep_offset_ms;
+static bool run_cycle_timing_inited;
+static bool run_phase_pending;
 
 static void leds_set(const struct prod_context *ctx, int value)
 {
@@ -304,9 +313,58 @@ static bool face_up_debounced(const struct prod_context *ctx)
 	return face_up_streak >= FACE_UP_ENTER_SAMPLES;
 }
 
+static void run_phase_schedule(void)
+{
+	run_phase_pending = true;
+}
+
+static void run_cycle_timing_init(void)
+{
+	bt_addr_le_t addrs[1];
+	size_t count = 1;
+	uint32_t phase_hash;
+	uint32_t sleep_hash;
+
+	bt_id_get(addrs, &count);
+	if (count == 0U) {
+		run_cycle_phase_ms = 0U;
+		run_sleep_offset_ms = 0U;
+		run_cycle_timing_inited = true;
+		return;
+	}
+
+	phase_hash = addrs[0].a.val[0] | ((uint32_t)addrs[0].a.val[1] << 8) |
+		     ((uint32_t)addrs[0].a.val[2] << 16);
+	run_cycle_phase_ms = phase_hash % RUN_CYCLE_MS;
+
+	sleep_hash = addrs[0].a.val[3] | ((uint32_t)addrs[0].a.val[4] << 8);
+	run_sleep_offset_ms = sleep_hash % (SLEEP_OFFSET_MAX_MS + 1U);
+
+	run_cycle_timing_inited = true;
+	LOG_INF("run cycle phase offset %u ms", run_cycle_phase_ms);
+}
+
+static void run_loop_entry_delay(struct prod_context *ctx)
+{
+	if (!run_cycle_timing_inited) {
+		run_cycle_timing_init();
+	}
+
+	if (!run_phase_pending) {
+		return;
+	}
+	run_phase_pending = false;
+
+	if (run_cycle_phase_ms == 0U) {
+		return;
+	}
+
+	(void)prod_wait_ms(ctx, run_cycle_phase_ms, PROD_WAIT_MODE_RUN);
+}
+
 static uint32_t run_sleep_ms(void)
 {
-	return SLEEP_MS + (sys_rand32_get() % (SLEEP_JITTER_MS + 1U));
+	return SLEEP_MS + run_sleep_offset_ms;
 }
 
 static bool shelf_poll_wake(const struct prod_context *ctx, const char **reason_out)
@@ -390,6 +448,24 @@ static void interactions_reset(const struct prod_context *ctx)
 
 	*ctx->interactions = 0U;
 	irq_unlock(key);
+}
+
+static void interactions_accrue_poll(const struct prod_context *ctx)
+{
+	int64_t now = k_uptime_get();
+
+	if (interactions_accrue_origin_ms == 0) {
+		interactions_accrue_origin_ms = now;
+		return;
+	}
+
+	if ((now - interactions_accrue_origin_ms) < (int64_t)INTERACTIONS_ACCRUE_MS) {
+		return;
+	}
+
+	interactions_reset(ctx);
+	interactions_accrue_origin_ms = now;
+	LOG_INF("interactions accrual reset (%u s)", INTERACTIONS_ACCRUE_MS / 1000U);
 }
 
 static int accel_int1_enable(const struct prod_context *ctx, bool enable)
@@ -495,6 +571,7 @@ static int exit_shelf_to_run(struct prod_context *ctx)
 	log_orientation_z(ctx, "exit_shelf");
 	face_up_streak = 0U;
 	shelf_leave_streak = 0U;
+	run_phase_schedule();
 	LOG_INF("state SHELF->RUN");
 	return 0;
 }
@@ -509,6 +586,7 @@ static enum prod_wait_result prod_wait_ms(struct prod_context *ctx, uint32_t ms,
 		uint32_t slice = MIN(PROD_WAIT_SLICE_MS, remaining);
 
 		magnet_hold_poll(ctx);
+		interactions_accrue_poll(ctx);
 		if (magnet_dfu_enter_pending) {
 			return PROD_WAIT_DFU_ENTER;
 		}
@@ -783,6 +861,8 @@ static enum prod_mode run_loop(struct prod_context *ctx)
 {
 	int ret;
 
+	run_loop_entry_delay(ctx);
+
 	while (1) {
 		int16_t distance_mm = INT16_MIN;
 		uint8_t flags = TELEM_FLAG_INTERACT_VALID;
@@ -821,7 +901,6 @@ static enum prod_mode run_loop(struct prod_context *ctx)
 				magnet_present ? "present" : "absent");
 		}
 
-		interactions_reset(ctx);
 		ctx->cycle++;
 
 		enum prod_wait_result wait = prod_wait_ms(ctx, run_sleep_ms(), PROD_WAIT_MODE_RUN);
@@ -934,6 +1013,7 @@ void prod_run(struct prod_context *ctx)
 
 	leds_boot_blink(ctx);
 	log_orientation_z(ctx, "boot");
+	interactions_accrue_origin_ms = k_uptime_get();
 
 	if (sample_face_up_at_boot(ctx)) {
 		mode = PROD_MODE_SHELF;
@@ -941,6 +1021,7 @@ void prod_run(struct prod_context *ctx)
 	} else {
 		mode = PROD_MODE_RUN;
 		face_up_streak = 0U;
+		run_phase_schedule();
 	}
 
 	if (magnet_pair_toggle_pending) {

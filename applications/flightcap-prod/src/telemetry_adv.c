@@ -9,7 +9,8 @@
 
 LOG_MODULE_REGISTER(telemetry_adv, LOG_LEVEL_INF);
 
-#define ADV_INTERVAL_UNITS 0x0320U /* 500 ms (0.625 ms units) */
+#define ADV_INTERVAL_BASE_UNITS 0x00A0U /* 100 ms (0.625 ms units) */
+#define ADV_INTERVAL_DITHER_UNIT 0x0020U /* 25 ms per step, max +175 ms */
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1U)
@@ -24,6 +25,19 @@ static int16_t last_distance_mm = INT16_MIN;
 static uint16_t last_interactions;
 static bool adv_running;
 static bool device_addr_logged;
+static struct bt_le_adv_param adv_param;
+static uint16_t adv_interval_units;
+
+static void telemetry_adv_param_update(void)
+{
+	uint16_t dither = (uint16_t)(((uint32_t)adv_payload.device_addr[5] & 0x07U) *
+				       ADV_INTERVAL_DITHER_UNIT);
+
+	adv_interval_units = ADV_INTERVAL_BASE_UNITS + dither;
+	adv_param = (struct bt_le_adv_param)BT_LE_ADV_PARAM_INIT(
+		BT_LE_ADV_OPT_USE_IDENTITY | BT_LE_ADV_OPT_SCANNABLE, adv_interval_units,
+		adv_interval_units, NULL);
+}
 
 static void telemetry_refresh_device_addr(void)
 {
@@ -37,6 +51,7 @@ static void telemetry_refresh_device_addr(void)
 	}
 
 	memcpy(adv_payload.device_addr, addrs[0].a.val, sizeof(adv_payload.device_addr));
+	telemetry_adv_param_update();
 
 	if (!device_addr_logged) {
 		LOG_INF("telemetry device_addr %02X:%02X:%02X:%02X:%02X:%02X",
@@ -69,9 +84,11 @@ static const struct bt_data sd[] = {
 BUILD_ASSERT(ADV_PRIMARY_ON_AIR_LEN <= BT_GAP_ADV_MAX_ADV_DATA_LEN);
 BUILD_ASSERT(ADV_SCAN_RSP_ON_AIR_LEN <= BT_GAP_ADV_MAX_ADV_DATA_LEN);
 
-static const struct bt_le_adv_param adv_param = BT_LE_ADV_PARAM_INIT(
-	BT_LE_ADV_OPT_USE_IDENTITY | BT_LE_ADV_OPT_SCANNABLE, ADV_INTERVAL_UNITS,
-	ADV_INTERVAL_UNITS, NULL);
+static void telemetry_adv_param_init(void)
+{
+	memset(adv_payload.device_addr, 0, sizeof(adv_payload.device_addr));
+	telemetry_adv_param_update();
+}
 
 int telemetry_adv_publish(int16_t distance_mm, uint16_t interactions, uint8_t flags)
 {
@@ -119,7 +136,7 @@ int telemetry_adv_start(void)
 
 	adv_running = true;
 	LOG_INF("BLE beacon started (non-conn scannable, %u ms interval, name \"%s\")",
-		(ADV_INTERVAL_UNITS * 625U) / 1000U, DEVICE_NAME);
+		(adv_interval_units * 625U) / 1000U, DEVICE_NAME);
 	return 0;
 }
 
@@ -146,6 +163,7 @@ void telemetry_adv_bt_disabled(void)
 	adv_running = false;
 	device_addr_logged = false;
 	memset(adv_payload.device_addr, 0, sizeof(adv_payload.device_addr));
+	telemetry_adv_param_init();
 }
 
 void telemetry_adv_get_device_addr(uint8_t addr[6])
