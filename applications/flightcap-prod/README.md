@@ -31,7 +31,7 @@ The firmware runs an explicit state machine (`prod_state.c`):
 
 | Phase | Duration | Behavior |
 | --- | --- | --- |
-| ToF sample | ~0.1–0.5 s | Powers VL53L0X rail, takes **10** distance readings, averages to `distance_mm` |
+| ToF sample | ~0.5–0.7 s | Powers VL53L0X rail, **18** single-shot reads (2 warm-up discarded), trimmed mean → median of last **5** cycles → `distance_mm` |
 | Advertise | **10 s** | Non-connectable BLE beacon @ **~100 ms** interval (per-device dither); interaction count updates live |
 | Sleep | **10 s + 0–500 ms** | Radio off; deterministic per-device offset from BLE identity; accelerometer still counts motion on INT1 |
 | Repeat | — | ~20 s total cycle (10 s adv + 10 s sleep; ToF adds ~0.1–0.5 s) |
@@ -108,16 +108,23 @@ On the wire, the full manufacturer-specific value is:
 | 3 | `version` | `uint8` | **`0x03`** — current schema (`0x02` = no `vbatt_mv`) |
 | 4–9 | `device_addr` | `uint8[6]` | **Per-device ID** — BLE identity, MSB-first byte order |
 | 10–11 | `seq` | `uint16` LE | Increments when telemetry fields change; wraps naturally |
-| 12–13 | `distance_mm` | `int16` LE | Average ToF distance in millimeters |
+| 12–13 | `distance_mm` | `int16` LE | Filtered ToF distance in millimeters (see below) |
 | 14–15 | `interactions` | `uint16` LE | Motion events since last 60 s accrual reset |
 | 16 | `flags` | `uint8` | Status bits (see below) |
 | 17–18 | `vbatt_mv` | `uint16` LE | Supply voltage in millivolts (v0x03+); valid when bit 5 set |
 
 ### `distance_mm`
 
-- Valid range when flag bit 0 is set: typically **20–2000** mm (sensor dependent).
+- Valid range when flag bit 0 is set: typically **20–2000** mm (sensor dependent); prod targets **30–100** mm static ranging.
 - Invalid / error: **`INT16_MIN` (`0x8000`, bytes `0x00 0x80`)** with bit 0 clear.
-- Distance is already integer mm on the transmitter — **do not parse as float on the wire**.
+- Integer millimeters on the wire — **do not parse as float**.
+
+**Two-stage filtering (Run mode, once per ~20 s cycle):**
+
+1. **In-cycle burst** — rail on, 2 warm-up reads discarded, up to 16 single-shot samples; **trimmed mean** (drop top/bottom 1/5, round-to-nearest).
+2. **Cross-cycle** — **median of the last 5** cycle estimates (~100 s); no extra sensor power between cycles.
+
+Cross-cycle history clears on boot and when entering shelf. Pair mode does not resample ToF (reuses last Run distance).
 
 ### `flags`
 

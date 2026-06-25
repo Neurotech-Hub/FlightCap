@@ -11,6 +11,7 @@
 
 #include "dfu_mode.h"
 #include "telemetry_adv.h"
+#include "tof_distance_filter.h"
 #include "vbatt_zephyr.h"
 #include "vl53l0x_zephyr.h"
 
@@ -29,7 +30,6 @@ LOG_MODULE_REGISTER(prod_state, LOG_LEVEL_INF);
 #define SHELF_LEAVE_SAMPLES 2
 #define MOTION_THRESHOLD_MG 3
 #define MOTION_DURATION_SAMPLES 0
-#define TOF_SAMPLES 10U
 #define ADV_WINDOW_MS 10000U
 #define SLEEP_MS 10000U
 #define RUN_CYCLE_MS (ADV_WINDOW_MS + SLEEP_MS)
@@ -544,6 +544,7 @@ static void enter_shelf(struct prod_context *ctx)
 	(void)accel_int1_enable(ctx, false);
 	(void)lis2dh12_zephyr_enter_shelf(ctx->lis2dh);
 	(void)lis2dh12_zephyr_shelf_capture_baseline(ctx->lis2dh, &shelf_int2_baseline);
+	tof_cycle_filter_clear();
 	*ctx->orientation_irq_pending = false;
 	face_up_streak = FACE_UP_ENTER_SAMPLES;
 	shelf_leave_streak = 0U;
@@ -643,8 +644,10 @@ static enum prod_wait_result prod_wait_ms(struct prod_context *ctx, uint32_t ms,
 static int sample_tof_average(const struct prod_context *ctx, int16_t *distance_mm_out,
 				uint8_t *flags_out)
 {
-	uint32_t sum = 0U;
-	int samples_ok = 0;
+	uint16_t burst_samples[TOF_BURST_SAMPLES];
+	uint16_t burst_count = 0U;
+	uint16_t cycle_mm = 0U;
+	uint16_t filtered_mm = 0U;
 	int ret;
 
 	if (!distance_mm_out || !flags_out) {
@@ -675,35 +678,48 @@ static int sample_tof_average(const struct prod_context *ctx, int16_t *distance_
 		return ret;
 	}
 
-	for (uint8_t i = 0; i < TOF_SAMPLES; i++) {
+	for (uint8_t i = 0; i < TOF_BURST_READS; i++) {
 		uint16_t mm = 0;
 
 		ret = vl53l0x_zephyr_read_mm(ctx->tof_dev, &mm);
-		if (ret == 0) {
-			sum += mm;
-			samples_ok++;
+		if (i < TOF_BURST_DISCARD) {
+			continue;
+		}
+		if (ret == 0 && burst_count < TOF_BURST_SAMPLES) {
+			burst_samples[burst_count++] = mm;
 		}
 	}
 
 	(void)vl53l0x_zephyr_power_off();
 
-	if (samples_ok == 0) {
+	if (burst_count < TOF_BURST_MIN_VALID) {
 		*distance_mm_out = INT16_MIN;
 		*flags_out = flags | TELEM_FLAG_TOF_ERR;
 		return -EIO;
 	}
 
-	int32_t avg = (int32_t)(sum / (uint32_t)samples_ok);
-
-	if (avg > INT16_MAX) {
-		avg = INT16_MAX;
-	}
-	if (avg < INT16_MIN) {
-		avg = INT16_MIN;
+	ret = tof_trimmed_mean(burst_samples, burst_count, &cycle_mm);
+	if (ret < 0) {
+		*distance_mm_out = INT16_MIN;
+		*flags_out = flags | TELEM_FLAG_TOF_ERR;
+		return ret;
 	}
 
-	*distance_mm_out = (int16_t)avg;
+	ret = tof_cycle_filter_push_median(cycle_mm, &filtered_mm);
+	if (ret < 0) {
+		*distance_mm_out = INT16_MIN;
+		*flags_out = flags | TELEM_FLAG_TOF_ERR;
+		return ret;
+	}
+
+	if (filtered_mm > INT16_MAX) {
+		filtered_mm = (uint16_t)INT16_MAX;
+	}
+
+	*distance_mm_out = (int16_t)filtered_mm;
 	*flags_out = flags | TELEM_FLAG_DIST_VALID;
+	LOG_INF("tof cycle_mm=%u filtered_mm=%d n_ok=%u/%u", cycle_mm, *distance_mm_out,
+		burst_count, TOF_BURST_SAMPLES);
 	return 0;
 }
 
@@ -1044,6 +1060,7 @@ void prod_run(struct prod_context *ctx)
 	leds_boot_blink(ctx);
 	log_orientation_z(ctx, "boot");
 	interactions_accrue_origin_ms = k_uptime_get();
+	tof_cycle_filter_init();
 
 	if (sample_face_up_at_boot(ctx)) {
 		mode = PROD_MODE_SHELF;
